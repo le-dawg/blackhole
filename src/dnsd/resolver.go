@@ -24,9 +24,25 @@ func NewResolver(upstreams []string) *Resolver {
 }
 
 func normalizeDomain(domain string) string {
+	domain = strings.TrimSpace(domain)
 	domain = strings.ToLower(domain)
 	domain = strings.TrimSuffix(domain, ".")
 	return domain
+}
+
+func (r *Resolver) initRootIfNeeded() {
+	r.mu.RLock()
+	if r.root != nil {
+		r.mu.RUnlock()
+		return
+	}
+	r.mu.RUnlock()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.root == nil {
+		r.root = &TrieNode{}
+	}
 }
 
 func (r *Resolver) AddBlockedDomain(domain string) {
@@ -34,6 +50,9 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	if domain == "" {
 		return
 	}
+
+	r.initRootIfNeeded()
+
 	parts := strings.Split(domain, ".")
 
 	r.mu.Lock()
@@ -42,6 +61,9 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	node := r.root
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
+		if part == "" {
+			continue
+		}
 		if node.isEnd {
 			// A parent domain is already blocked, so this subdomain is implicitly blocked.
 			// No need to insert further.
@@ -66,14 +88,26 @@ func (r *Resolver) Resolve(domain string) bool {
 	if domain == "" {
 		return false
 	}
-	parts := strings.Split(domain, ".")
+
+	r.initRootIfNeeded()
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	node := r.root
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
+	end := len(domain)
+	for end > 0 {
+		start := end - 1
+		for start >= 0 && domain[start] != '.' {
+			start--
+		}
+		part := domain[start+1 : end]
+		end = start
+
+		if part == "" {
+			continue
+		}
+
 		if node.children == nil {
 			return false
 		}

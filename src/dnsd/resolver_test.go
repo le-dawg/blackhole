@@ -88,3 +88,54 @@ func TestConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+func TestZeroValueResolver(t *testing.T) {
+	var r Resolver
+	// Test AddBlockedDomain works on zero value
+	r.AddBlockedDomain("ads.doubleclick.net")
+
+	// Test Resolve works on zero value
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected ads.doubleclick.net to be blocked on zero-value resolver")
+	}
+	if r.Resolve("google.com") {
+		t.Error("Expected google.com to not be blocked")
+	}
+}
+
+func TestWhitespaceNormalization(t *testing.T) {
+	r := NewResolver([]string{"1.1.1.1"})
+	r.AddBlockedDomain("  ads.doubleclick.net  ")
+
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected ads.doubleclick.net to be blocked")
+	}
+	if !r.Resolve("  ads.doubleclick.net  ") {
+		t.Error("Expected padded lookup to be blocked")
+	}
+}
+
+func TestConsecutiveDots(t *testing.T) {
+	r := NewResolver([]string{"1.1.1.1"})
+	r.AddBlockedDomain("ads..doubleclick.net")
+
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected normalized domain to match domain with consecutive dots")
+	}
+	if !r.Resolve("ads..doubleclick.net") {
+		t.Error("Expected consecutive dot lookup to match")
+	}
+}
+
+func BenchmarkResolve(b *testing.B) {
+	r := NewResolver([]string{"1.1.1.1"})
+	r.AddBlockedDomain("ads.doubleclick.net")
+	r.AddBlockedDomain("adservice.google.com")
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		r.Resolve("ads.doubleclick.net")
+		r.Resolve("google.com")
+	}
+}
