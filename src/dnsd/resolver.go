@@ -10,12 +10,16 @@ type TrieNode struct {
 	isEnd    bool
 }
 
+// Resolver is a concurrency-safe DNS blocklist resolver that uses a trie structure
+// to match domain queries against a list of blocked domains. It supports efficient
+// lookup of subdomains under blocked parent domains.
 type Resolver struct {
 	mu        sync.RWMutex
 	root      *TrieNode
 	upstreams []string
 }
 
+// NewResolver initializes and returns a new *Resolver with the provided upstream DNS servers.
 func NewResolver(upstreams []string) *Resolver {
 	return &Resolver{
 		root:      &TrieNode{},
@@ -30,33 +34,23 @@ func normalizeDomain(domain string) string {
 	return domain
 }
 
-func (r *Resolver) initRootIfNeeded() {
-	r.mu.RLock()
-	if r.root != nil {
-		r.mu.RUnlock()
-		return
-	}
-	r.mu.RUnlock()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.root == nil {
-		r.root = &TrieNode{}
-	}
-}
-
+// AddBlockedDomain normalizes and inserts a domain into the resolver's blocked trie.
+// It is safe for concurrent use. If a parent domain is already blocked, any subdomain
+// insertion is optimized away.
 func (r *Resolver) AddBlockedDomain(domain string) {
 	domain = normalizeDomain(domain)
 	if domain == "" {
 		return
 	}
 
-	r.initRootIfNeeded()
-
 	parts := strings.Split(domain, ".")
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.root == nil {
+		r.root = &TrieNode{}
+	}
 
 	node := r.root
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -83,16 +77,21 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	node.children = nil
 }
 
+// Resolve normalizes a domain and queries the trie to check if it is blocked.
+// It returns true if the domain or any of its parent domains are blocked, and false otherwise.
+// It is safe for concurrent use.
 func (r *Resolver) Resolve(domain string) bool {
 	domain = normalizeDomain(domain)
 	if domain == "" {
 		return false
 	}
 
-	r.initRootIfNeeded()
-
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
+	if r.root == nil {
+		return false
+	}
 
 	node := r.root
 	end := len(domain)
