@@ -127,6 +127,58 @@ func TestConsecutiveDots(t *testing.T) {
 	}
 }
 
+func TestMalformedInputsDoNotCorruptResolver(t *testing.T) {
+	r := NewResolver([]string{"1.1.1.1"})
+
+	// Verify that adding valid domains works.
+	r.AddBlockedDomain("ads.doubleclick.net")
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected ads.doubleclick.net to be blocked initially")
+	}
+
+	// Try adding malformed domains that could potentially corrupt the root node.
+	malformed := []string{"", "..", "...", "  .  ", "  ", "."}
+	for _, m := range malformed {
+		r.AddBlockedDomain(m)
+	}
+
+	// Verify that the root trie node is not corrupted (meaning a normal domain is NOT blocked).
+	if r.Resolve("google.com") {
+		t.Error("Expected google.com to NOT be blocked after adding malformed inputs")
+	}
+	if r.Resolve("yahoo.com") {
+		t.Error("Expected yahoo.com to NOT be blocked after adding malformed inputs")
+	}
+
+	// Verify that the valid domains are still blocked.
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected ads.doubleclick.net to remain blocked after adding malformed inputs")
+	}
+	if !r.Resolve("sub.ads.doubleclick.net") {
+		t.Error("Expected sub.ads.doubleclick.net to remain blocked after adding malformed inputs")
+	}
+}
+
+func TestResolverMultipleTrailingDots(t *testing.T) {
+	r := NewResolver([]string{"1.1.1.1"})
+	r.AddBlockedDomain("ads.doubleclick.net...")
+
+	if !r.Resolve("ads.doubleclick.net") {
+		t.Error("Expected lookup without trailing dots to match addition with multiple trailing dots")
+	}
+	if !r.Resolve("ads.doubleclick.net.") {
+		t.Error("Expected lookup with single trailing dot to match addition with multiple trailing dots")
+	}
+	if !r.Resolve("ads.doubleclick.net...") {
+		t.Error("Expected lookup with multiple trailing dots to match addition with multiple trailing dots")
+	}
+
+	r.AddBlockedDomain("adservice.google.com")
+	if !r.Resolve("adservice.google.com...") {
+		t.Error("Expected lookup with multiple trailing dots to match addition without trailing dots")
+	}
+}
+
 func BenchmarkResolve(b *testing.B) {
 	r := NewResolver([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads.doubleclick.net")

@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-type TrieNode struct {
-	children map[string]*TrieNode
+type trieNode struct {
+	children map[string]*trieNode
 	isEnd    bool
 }
 
@@ -15,22 +15,52 @@ type TrieNode struct {
 // lookup of subdomains under blocked parent domains.
 type Resolver struct {
 	mu        sync.RWMutex
-	root      *TrieNode
+	root      *trieNode
 	upstreams []string
 }
 
 // NewResolver initializes and returns a new *Resolver with the provided upstream DNS servers.
 func NewResolver(upstreams []string) *Resolver {
 	return &Resolver{
-		root:      &TrieNode{},
+		root:      &trieNode{},
 		upstreams: upstreams,
 	}
 }
 
+func needsNormalization(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	// Check first character for whitespace
+	first := domain[0]
+	if first <= ' ' {
+		return true
+	}
+	// Check last character for whitespace or dot
+	last := domain[len(domain)-1]
+	if last <= ' ' || last == '.' {
+		return true
+	}
+	// Check for any uppercase character, or non-ASCII spaces/chars
+	for i := 0; i < len(domain); i++ {
+		c := domain[i]
+		if c >= 'A' && c <= 'Z' {
+			return true
+		}
+		if c > 127 {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeDomain(domain string) string {
+	if !needsNormalization(domain) {
+		return domain
+	}
 	domain = strings.TrimSpace(domain)
 	domain = strings.ToLower(domain)
-	domain = strings.TrimSuffix(domain, ".")
+	domain = strings.TrimRight(domain, ".")
 	return domain
 }
 
@@ -49,27 +79,32 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	defer r.mu.Unlock()
 
 	if r.root == nil {
-		r.root = &TrieNode{}
+		r.root = &trieNode{}
 	}
 
 	node := r.root
+	inserted := false
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
 		if part == "" {
 			continue
 		}
+		inserted = true
 		if node.isEnd {
 			// A parent domain is already blocked, so this subdomain is implicitly blocked.
 			// No need to insert further.
 			return
 		}
 		if node.children == nil {
-			node.children = make(map[string]*TrieNode)
+			node.children = make(map[string]*trieNode)
 		}
 		if _, exists := node.children[part]; !exists {
-			node.children[part] = &TrieNode{}
+			node.children[part] = &trieNode{}
 		}
 		node = node.children[part]
+	}
+	if !inserted {
+		return
 	}
 	node.isEnd = true
 	// Since this node is now blocked, all its children (more specific subdomains) are redundant.
