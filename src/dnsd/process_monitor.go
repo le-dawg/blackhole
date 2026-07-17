@@ -96,6 +96,7 @@ static int check_pid_litellm(int pid) {
 import "C"
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -224,6 +225,10 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 		return "", "", errors.New("failed to list pids: no pids allocated")
 	}
 
+	var targetName string
+	var targetBundleID string
+	var targetFound bool
+
 	for _, pid := range pids {
 		if pid == 0 {
 			continue
@@ -258,13 +263,13 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 				sockSize := C.proc_pidfdinfo(pid, fd.proc_fd, C.PROC_PIDFDSOCKETINFO, unsafe.Pointer(&sockInfo), C.int(unsafe.Sizeof(sockInfo)))
 				if sockSize > 0 {
 					// Use C helper to extract local port from the union in a compilation-safe way
-					localPort := C.get_socket_local_port(&sockInfo)
-					if uint16(localPort) == port {
+					localPort := uint16(C.get_socket_local_port(&sockInfo))
+					if localPort > 0 {
 						// Match! Find process executable path
 						pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
-						ret := C.proc_pidpath(pid, unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer)))
+						ret := int(C.proc_pidpath(pid, unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
 						if ret > 0 {
-							procName := C.GoString((*C.char)(unsafe.Pointer(&pathBuffer[0])))
+							procName := string(pathBuffer[:ret])
 							bundleID := extractBundleID(procName)
 
 							if C.check_pid_litellm(pid) != 0 {
@@ -272,12 +277,30 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 									procName = procName + "-litellm"
 								}
 							}
-							return procName, bundleID, nil
+
+							// Populate cache for all active ports discovered
+							processCacheMu.Lock()
+							processCache[localPort] = cacheEntry{
+								name:      procName,
+								bundleID:  bundleID,
+								createdAt: time.Now(),
+							}
+							processCacheMu.Unlock()
+
+							if localPort == port {
+								targetName = procName
+								targetBundleID = bundleID
+								targetFound = true
+							}
 						}
 					}
 				}
 			}
 		}
+	}
+
+	if targetFound {
+		return targetName, targetBundleID, nil
 	}
 	return "", "", fmt.Errorf("port %d not found in active sockets", port)
 }
@@ -310,7 +333,9 @@ func extractBundleID(execPath string) string {
 	}
 
 	if bytes.HasPrefix(data, []byte("bplist")) {
-		cmd := exec.Command("plutil", "-convert", "xml1", "-o", "-", plistPath)
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "/usr/bin/plutil", "-convert", "xml1", "-o", "-", plistPath)
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if err := cmd.Run(); err == nil {

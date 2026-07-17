@@ -198,3 +198,44 @@ func TestLiteLLMArgumentDetection(t *testing.T) {
 		t.Errorf("Expected C helper to detect 'litellm' in arguments of PID %d", cmd.Process.Pid)
 	}
 }
+
+func TestProcessCacheBulkPopulate(t *testing.T) {
+	// Start two TCP listeners on ephemeral ports
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen on TCP port 1: %v", err)
+	}
+	defer ln1.Close()
+
+	ln2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen on TCP port 2: %v", err)
+	}
+	defer ln2.Close()
+
+	port1 := uint16(ln1.Addr().(*net.TCPAddr).Port)
+	port2 := uint16(ln2.Addr().(*net.TCPAddr).Port)
+
+	// Clear the process cache completely
+	processCacheMu.Lock()
+	processCache = make(map[uint16]cacheEntry)
+	processCacheMu.Unlock()
+
+	// Query port 1. This should run a system scan and populate both port 1 and port 2.
+	_, _, err = GetProcessInfoForPort(port1)
+	if err != nil {
+		t.Fatalf("Failed to get process info for port1: %v", err)
+	}
+
+	// Verify that port 2 is already in the cache!
+	processCacheMu.RLock()
+	entry2, found := processCache[port2]
+	processCacheMu.RUnlock()
+
+	if !found {
+		t.Errorf("Expected port 2 (%d) to be bulk populated in the cache after querying port 1 (%d), but it was not found", port2, port1)
+	} else if entry2.name == "" {
+		t.Errorf("Expected bulk-populated cache entry for port 2 to have a valid process name, got empty string")
+	}
+}
+
