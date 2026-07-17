@@ -2,8 +2,9 @@ package dnsd
 
 /*
 #cgo CFLAGS: -x objective-c
-#cgo LDFLAGS: -framework Cocoa
-#import <Cocoa/Cocoa.h>
+#cgo LDFLAGS: -framework Security -framework CoreFoundation
+#import <Security/Security.h>
+#import <CoreFoundation/CoreFoundation.h>
 #include <sys/proc_info.h>
 #include <libproc.h>
 #include <stdlib.h>
@@ -23,7 +24,7 @@ static uint16_t get_socket_local_port(struct socket_fdinfo *sockInfo) {
 }
 
 // Helper to check if process arguments contain "litellm" using KERN_PROCARGS2
-static int check_pid_litellm(int pid) {
+static int check_pid_litellm(pid_t pid) {
 	int mib[3];
 	static int argmax = 0;
 	size_t size;
@@ -97,27 +98,55 @@ static int check_pid_litellm(int pid) {
 	return found;
 }
 
-// Objective-C helper that uses NSRunningApplication to retrieve the bundle ID of a process by its PID.
-static char* get_bundle_id_for_pid(int pid) {
-	@autoreleasepool {
-		NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
-		if (app == nil) {
-			return NULL;
-		}
-		NSString *bundleID = [app bundleIdentifier];
-		if (bundleID == nil) {
-			return NULL;
-		}
-		const char *utf8 = [bundleID UTF8String];
-		if (utf8 == NULL) {
-			return NULL;
-		}
-		char *result = (char *)malloc(strlen(utf8) + 1);
-		if (result != NULL) {
-			strcpy(result, utf8);
-		}
-		return result;
+// CoreFoundation/Security-based helper to retrieve the bundle ID of a process by its PID.
+static char* get_bundle_id_for_pid(pid_t pid) {
+	CFNumberRef pidNum = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &pid);
+	if (pidNum == NULL) {
+		return NULL;
 	}
+
+	const void *keys[] = { kSecGuestAttributePid };
+	const void *values[] = { pidNum };
+	CFDictionaryRef attributes = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	CFRelease(pidNum);
+	if (attributes == NULL) {
+		return NULL;
+	}
+
+	SecCodeRef guestRef = NULL;
+	OSStatus status = SecCodeCopyGuestWithAttributes(NULL, attributes, kSecCSDefaultFlags, &guestRef);
+	CFRelease(attributes);
+
+	if (status != errSecSuccess || guestRef == NULL) {
+		return NULL;
+	}
+
+	CFDictionaryRef signingInfo = NULL;
+	status = SecCodeCopySigningInformation((SecStaticCodeRef)guestRef, kSecCSSigningInformation, &signingInfo);
+	CFRelease(guestRef);
+
+	if (status != errSecSuccess || signingInfo == NULL) {
+		return NULL;
+	}
+
+	CFStringRef bundleIDRef = (CFStringRef)CFDictionaryGetValue(signingInfo, kSecCodeInfoIdentifier);
+	if (bundleIDRef == NULL || CFGetTypeID(bundleIDRef) != CFStringGetTypeID()) {
+		CFRelease(signingInfo);
+		return NULL;
+	}
+
+	CFIndex length = CFStringGetLength(bundleIDRef);
+	CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1;
+	char *result = (char *)malloc(maxSize);
+	if (result != NULL) {
+		if (!CFStringGetCString(bundleIDRef, result, maxSize, kCFStringEncodingUTF8)) {
+			free(result);
+			result = NULL;
+		}
+	}
+
+	CFRelease(signingInfo);
+	return result;
 }
 */
 import "C"
@@ -154,13 +183,32 @@ var (
 	processScanMu   sync.Mutex // For serializing system-wide scans
 	bundleIDCache   = make(map[string]string)
 	bundleIDCacheMu sync.RWMutex
-	pidsScratch     []C.int
+	pidsScratch     []C.pid_t
 	fdsScratch      []C.struct_proc_fdinfo
+
+	litellmCache   = make(map[C.pid_t]bool)
+	litellmCacheMu sync.RWMutex
 )
+
+func isLiteLLM(pid C.pid_t) bool {
+	litellmCacheMu.RLock()
+	val, found := litellmCache[pid]
+	litellmCacheMu.RUnlock()
+	if found {
+		return val
+	}
+
+	res := C.check_pid_litellm(pid) != 0
+
+	litellmCacheMu.Lock()
+	litellmCache[pid] = res
+	litellmCacheMu.Unlock()
+	return res
+}
 
 // CheckPIDLiteLLM is a wrapper around the C helper check_pid_litellm for testing purposes.
 func CheckPIDLiteLLM(pid int) bool {
-	return C.check_pid_litellm(C.int(pid)) != 0
+	return isLiteLLM(C.pid_t(pid))
 }
 
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port
@@ -234,14 +282,14 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 	}
 
 	// Calculate number of PIDs from returned byte size
-	pidSize := C.int(unsafe.Sizeof(C.int(0)))
+	pidSize := C.int(unsafe.Sizeof(C.pid_t(0)))
 	pidsCount := bytesCount / pidSize
 	if pidsCount <= 0 {
 		return "", "", errors.New("failed to list pids: no pids allocated")
 	}
 
 	if int(pidsCount) > cap(pidsScratch) {
-		pidsScratch = make([]C.int, pidsCount)
+		pidsScratch = make([]C.pid_t, pidsCount)
 	} else {
 		pidsScratch = pidsScratch[:pidsCount]
 	}
@@ -260,14 +308,14 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 	var targetBundleID string
 	var targetFound bool
 
-	resolvedPIDs := make(map[C.int]ProcessCacheEntry)
+	resolvedPIDs := make(map[C.pid_t]ProcessCacheEntry)
 
 	for _, pid := range pids {
 		if pid == 0 {
 			continue
 		}
 		// Query file descriptor info for sockets
-		fdBufferSize := C.proc_pidinfo(pid, C.PROC_PIDLISTFDS, 0, nil, 0)
+		fdBufferSize := C.proc_pidinfo(C.int(pid), C.PROC_PIDLISTFDS, 0, nil, 0)
 		if fdBufferSize <= 0 {
 			continue
 		}
@@ -283,7 +331,7 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 			fdsScratch = fdsScratch[:fdCount]
 		}
 
-		resFd := C.proc_pidinfo(pid, C.PROC_PIDLISTFDS, 0, unsafe.Pointer(&fdsScratch[0]), C.int(fdBufferSize))
+		resFd := C.proc_pidinfo(C.int(pid), C.PROC_PIDLISTFDS, 0, unsafe.Pointer(&fdsScratch[0]), C.int(fdBufferSize))
 		if resFd <= 0 {
 			continue
 		}
@@ -296,7 +344,7 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 		for _, fd := range fds {
 			if fd.proc_fdtype == C.PROX_FDTYPE_SOCKET {
 				var sockInfo C.struct_socket_fdinfo
-				sockSize := C.proc_pidfdinfo(pid, fd.proc_fd, C.PROC_PIDFDSOCKETINFO, unsafe.Pointer(&sockInfo), C.int(unsafe.Sizeof(sockInfo)))
+				sockSize := C.proc_pidfdinfo(C.int(pid), fd.proc_fd, C.PROC_PIDFDSOCKETINFO, unsafe.Pointer(&sockInfo), C.int(unsafe.Sizeof(sockInfo)))
 				if sockSize > 0 {
 					// Use C helper to extract local port from the union in a compilation-safe way
 					localPort := uint16(C.get_socket_local_port(&sockInfo))
@@ -305,13 +353,13 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 						entry, resolved := resolvedPIDs[pid]
 						if !resolved {
 							pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
-							ret := int(C.proc_pidpath(pid, unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
+							ret := int(C.proc_pidpath(C.int(pid), unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
 							if ret > 0 {
 								procName := string(pathBuffer[:ret])
 
 								// Insecure/Spoofable Bundle ID Resolution fix:
-								// First query NSRunningApplication helper
-								cBundleID := C.get_bundle_id_for_pid(C.int(pid))
+								// First query CoreFoundation/Security helper
+								cBundleID := C.get_bundle_id_for_pid(pid)
 								var bundleID string
 								if cBundleID != nil {
 									bundleID = C.GoString(cBundleID)
@@ -320,7 +368,7 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 									bundleID = extractBundleID(procName)
 								}
 
-								if C.check_pid_litellm(pid) != 0 {
+								if isLiteLLM(pid) {
 									if !strings.Contains(strings.ToLower(procName), "litellm") {
 										procName = procName + "-litellm"
 									}
