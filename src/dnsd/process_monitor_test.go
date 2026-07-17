@@ -18,6 +18,11 @@ func TestProcessCorrelationInactive(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveTCP(t *testing.T) {
+	// Reset lastScanTime to avoid rate-limiting from previous tests
+	processScanMu.Lock()
+	lastScanTime = time.Time{}
+	processScanMu.Unlock()
+
 	// Start a TCP listener on an ephemeral port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -57,6 +62,11 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveUDP(t *testing.T) {
+	// Reset lastScanTime to avoid rate-limiting from previous tests
+	processScanMu.Lock()
+	lastScanTime = time.Time{}
+	processScanMu.Unlock()
+
 	// Start a UDP listener on an ephemeral port
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -133,13 +143,25 @@ func TestExtractBundleID(t *testing.T) {
 }
 
 func TestProcessCacheTTL(t *testing.T) {
+	// Reset lastScanTime to avoid rate-limiting from previous tests
+	processScanMu.Lock()
+	lastScanTime = time.Time{}
+	processScanMu.Unlock()
+
 	// Clear any existing cache entries
 	processCacheMu.Lock()
 	processCache = make(map[uint16]cacheEntry)
 	processCacheMu.Unlock()
 
-	// Seed cache directly for a port
-	port := uint16(12345)
+	// Dynamically allocate a free ephemeral port
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen on TCP: %v", err)
+	}
+	port := uint16(ln.Addr().(*net.TCPAddr).Port)
+	ln.Close()
+
+	// Seed cache directly for the port
 	processCacheMu.Lock()
 	processCache[port] = cacheEntry{
 		name:      "cached_proc",
@@ -164,10 +186,54 @@ func TestProcessCacheTTL(t *testing.T) {
 	processCache[port] = entry
 	processCacheMu.Unlock()
 
-	// Verify that it no longer returns the cached values (since the port 12345 is inactive, it should return an error)
+	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error)
 	_, _, err = GetProcessInfoForPort(port)
 	if err == nil {
 		t.Errorf("Expected query to fail after cache expiration")
+	}
+}
+
+func TestBinaryPlistDecoding(t *testing.T) {
+	// Create a temporary directory structure mimicking an app bundle
+	tempDir, err := os.MkdirTemp("", "testbinaryplist_*.app")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	contentsDir := filepath.Join(tempDir, "Contents")
+	if err := os.Mkdir(contentsDir, 0755); err != nil {
+		t.Fatalf("Failed to create Contents dir: %v", err)
+	}
+
+	xmlContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.solution8.binarytest</string>
+</dict>
+</plist>`
+
+	xmlPlistPath := filepath.Join(contentsDir, "Info.plist")
+	if err := os.WriteFile(xmlPlistPath, []byte(xmlContent), 0644); err != nil {
+		t.Fatalf("Failed to write Info.plist: %v", err)
+	}
+
+	// Use plutil to convert the plist to binary1 format in place
+	cmd := exec.Command("/usr/bin/plutil", "-convert", "binary1", xmlPlistPath)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("Failed to convert Info.plist to binary: %v", err)
+	}
+
+	// Fake executable path inside the bundle
+	execPath := filepath.Join(contentsDir, "MacOS", "binarytest")
+
+	// Call extractBundleID which should convert it back to XML and decode it
+	bundleID := extractBundleID(execPath)
+	expectedBundleID := "com.solution8.binarytest"
+	if bundleID != expectedBundleID {
+		t.Errorf("Expected bundle ID %q, got %q", expectedBundleID, bundleID)
 	}
 }
 
@@ -200,6 +266,11 @@ func TestLiteLLMArgumentDetection(t *testing.T) {
 }
 
 func TestProcessCacheBulkPopulate(t *testing.T) {
+	// Reset lastScanTime to avoid rate-limiting from previous tests
+	processScanMu.Lock()
+	lastScanTime = time.Time{}
+	processScanMu.Unlock()
+
 	// Start two TCP listeners on ephemeral ports
 	ln1, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -236,6 +307,55 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 		t.Errorf("Expected port 2 (%d) to be bulk populated in the cache after querying port 1 (%d), but it was not found", port2, port1)
 	} else if entry2.name == "" {
 		t.Errorf("Expected bulk-populated cache entry for port 2 to have a valid process name, got empty string")
+	}
+}
+
+func TestProcessScanRateLimiting(t *testing.T) {
+	// Reset scan state
+	processScanMu.Lock()
+	lastScanTime = time.Time{}
+	processCache = make(map[uint16]cacheEntry)
+	processScanMu.Unlock()
+
+	// Get a dynamically allocated free port (inactive)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to listen: %v", err)
+	}
+	port1 := uint16(ln.Addr().(*net.TCPAddr).Port)
+	ln.Close()
+
+	// Query port 1. Since lastScanTime is zero, this must perform a scan and return error (port inactive)
+	_, _, err = GetProcessInfoForPort(port1)
+	if err == nil {
+		t.Errorf("Expected lookup on inactive port to fail")
+	}
+
+	// Verify lastScanTime was updated
+	processScanMu.Lock()
+	scanTime1 := lastScanTime
+	processScanMu.Unlock()
+	if scanTime1.IsZero() {
+		t.Fatalf("Expected lastScanTime to be updated after scan")
+	}
+
+	// Immediately query another inactive port. It should trigger the rate limit and fail instantly without scanning.
+	port2 := port1 + 1
+	if port2 == 0 {
+		port2 = 1000
+	}
+
+	_, _, err = GetProcessInfoForPort(port2)
+	if err == nil {
+		t.Errorf("Expected rate-limited lookup to fail")
+	}
+
+	// Verify that lastScanTime did NOT change, meaning no new scan was run
+	processScanMu.Lock()
+	scanTime2 := lastScanTime
+	processScanMu.Unlock()
+	if !scanTime2.Equal(scanTime1) {
+		t.Errorf("Expected scan to be rate-limited (lastScanTime unchanged), but scan time changed: %v -> %v", scanTime1, scanTime2)
 	}
 }
 
