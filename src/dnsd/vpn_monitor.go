@@ -141,13 +141,13 @@ func readDNSServers() []string {
 	defer C.free(unsafe.Pointer(cName))
 
 	nameStr := C.CFStringCreateWithCString(C.kCFAllocatorDefault, cName, C.kCFStringEncodingUTF8)
-	if nameStr == nil {
+	if unsafe.Pointer(nameStr) == nil {
 		return nil
 	}
 	defer C.CFRelease(C.CFTypeRef(nameStr))
 
 	store := C.SCDynamicStoreCreate(C.kCFAllocatorDefault, nameStr, nil, nil)
-	if store == nil {
+	if unsafe.Pointer(store) == nil {
 		return nil
 	}
 	defer C.CFRelease(C.CFTypeRef(store))
@@ -158,7 +158,7 @@ func readDNSServers() []string {
 // getDNSServers extracts DNS server IP addresses from the given SCDynamicStoreRef
 func getDNSServers(store C.SCDynamicStoreRef) []string {
 	serversArray := C.copy_dns_servers(store)
-	if serversArray == nil {
+	if unsafe.Pointer(serversArray) == nil {
 		return nil
 	}
 	defer C.CFRelease(C.CFTypeRef(serversArray))
@@ -174,7 +174,7 @@ func getDNSServers(store C.SCDynamicStoreRef) []string {
 		if val == nil {
 			continue
 		}
-		if C.CFGetTypeID(val) == C.CFStringGetTypeID() {
+		if C.CFGetTypeID(C.CFTypeRef(val)) == C.CFStringGetTypeID() {
 			cfStr := C.CFStringRef(val)
 			cStr := C.CFStringGetCStringPtr(cfStr, C.kCFStringEncodingUTF8)
 			if cStr != nil {
