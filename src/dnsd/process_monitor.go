@@ -170,53 +170,148 @@ type ProcessCacheEntry struct {
 	BundleID string
 }
 
-type cacheEntry struct {
-	name      string
-	bundleID  string
+type ProcessMetadata struct {
+	Name     string
+	BundleID string
+}
+
+type portPIDEntry struct {
+	pid       int
+	createdAt time.Time
+	err       error
+}
+
+type pidMetadataEntry struct {
+	metadata  ProcessMetadata
 	createdAt time.Time
 	err       error
 }
 
 var (
-	processCache    = make(map[uint16]cacheEntry)
-	processCacheMu  sync.RWMutex
+	portToPIDCache     = make(map[uint16]portPIDEntry)
+	portToPIDCacheMu   sync.RWMutex
+	pidMetadataCache   = make(map[int]pidMetadataEntry)
+	pidMetadataCacheMu sync.RWMutex
+	pidLocks           = make(map[int]*sync.Mutex)
+	pidLocksMu         sync.Mutex
+
 	processScanMu   sync.Mutex // For serializing system-wide scans
 	bundleIDCache   = make(map[string]string)
 	bundleIDCacheMu sync.RWMutex
 	pidsScratch     []C.pid_t
 	fdsScratch      []C.struct_proc_fdinfo
-
-	litellmCache   = make(map[C.pid_t]bool)
-	litellmCacheMu sync.RWMutex
 )
 
-func isLiteLLM(pid C.pid_t) bool {
-	litellmCacheMu.RLock()
-	val, found := litellmCache[pid]
-	litellmCacheMu.RUnlock()
-	if found {
-		return val
+func getMutexForPID(pid int) *sync.Mutex {
+	pidLocksMu.Lock()
+	defer pidLocksMu.Unlock()
+	mu, ok := pidLocks[pid]
+	if !ok {
+		mu = &sync.Mutex{}
+		pidLocks[pid] = mu
 	}
+	return mu
+}
 
+func isLiteLLM(pid C.pid_t, localMap map[C.pid_t]bool) bool {
+	if localMap != nil {
+		if val, ok := localMap[pid]; ok {
+			return val
+		}
+	}
 	res := C.check_pid_litellm(pid) != 0
-
-	litellmCacheMu.Lock()
-	litellmCache[pid] = res
-	litellmCacheMu.Unlock()
+	if localMap != nil {
+		localMap[pid] = res
+	}
 	return res
 }
 
 // CheckPIDLiteLLM is a wrapper around the C helper check_pid_litellm for testing purposes.
 func CheckPIDLiteLLM(pid int) bool {
-	return isLiteLLM(C.pid_t(pid))
+	return C.check_pid_litellm(C.pid_t(pid)) != 0
+}
+
+func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
+	pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
+	ret := int(C.proc_pidpath(C.int(pid), unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
+	if ret <= 0 {
+		return ProcessMetadata{}, fmt.Errorf("failed to get proc_pidpath for pid %d", pid)
+	}
+	procName := string(pathBuffer[:ret])
+
+	// First query CoreFoundation/Security helper
+	cBundleID := C.get_bundle_id_for_pid(C.pid_t(pid))
+	var bundleID string
+	if cBundleID != nil {
+		bundleID = C.GoString(cBundleID)
+		C.free(unsafe.Pointer(cBundleID))
+	} else {
+		bundleID = extractBundleID(procName)
+	}
+
+	localMap := make(map[C.pid_t]bool)
+	if isLiteLLM(C.pid_t(pid), localMap) {
+		if !strings.Contains(strings.ToLower(procName), "litellm") {
+			procName = procName + "-litellm"
+		}
+	}
+
+	return ProcessMetadata{
+		Name:     procName,
+		BundleID: bundleID,
+	}, nil
+}
+
+func getMetadataForPID(pid int) (string, string, error) {
+	pidMetadataCacheMu.RLock()
+	entry, found := pidMetadataCache[pid]
+	pidMetadataCacheMu.RUnlock()
+
+	if found && time.Since(entry.createdAt) < 1*time.Minute {
+		if entry.err != nil {
+			return "", "", entry.err
+		}
+		return entry.metadata.Name, entry.metadata.BundleID, nil
+	}
+
+	mu := getMutexForPID(pid)
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Double check
+	pidMetadataCacheMu.RLock()
+	entry, found = pidMetadataCache[pid]
+	pidMetadataCacheMu.RUnlock()
+
+	if found && time.Since(entry.createdAt) < 1*time.Minute {
+		if entry.err != nil {
+			return "", "", entry.err
+		}
+		return entry.metadata.Name, entry.metadata.BundleID, nil
+	}
+
+	meta, err := resolveMetadataForPID(pid)
+
+	pidMetadataCacheMu.Lock()
+	pidMetadataCache[pid] = pidMetadataEntry{
+		metadata:  meta,
+		createdAt: time.Now(),
+		err:       err,
+	}
+	pidMetadataCacheMu.Unlock()
+
+	if err != nil {
+		return "", "", err
+	}
+	return meta.Name, meta.BundleID, nil
 }
 
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port
 // to its originating Process Name, Bundle ID (if applicable), and PID.
 func GetProcessInfoForPort(port uint16) (string, string, error) {
-	processCacheMu.RLock()
-	entry, found := processCache[port]
-	processCacheMu.RUnlock()
+	portToPIDCacheMu.RLock()
+	entry, found := portToPIDCache[port]
+	portToPIDCacheMu.RUnlock()
 
 	if found {
 		ttl := 5 * time.Second
@@ -227,7 +322,7 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 			if entry.err != nil {
 				return "", "", entry.err
 			}
-			return entry.name, entry.bundleID, nil
+			return getMetadataForPID(entry.pid)
 		}
 	}
 
@@ -235,9 +330,9 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 	defer processScanMu.Unlock()
 
 	// Double-check under scan lock
-	processCacheMu.RLock()
-	entry, found = processCache[port]
-	processCacheMu.RUnlock()
+	portToPIDCacheMu.RLock()
+	entry, found = portToPIDCache[port]
+	portToPIDCacheMu.RUnlock()
 
 	if found {
 		ttl := 5 * time.Second
@@ -248,44 +343,36 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 			if entry.err != nil {
 				return "", "", entry.err
 			}
-			return entry.name, entry.bundleID, nil
+			return getMetadataForPID(entry.pid)
 		}
 	}
 
-	name, bundleID, err := getProcessInfoForPortNoCache(port)
-
-	processCacheMu.Lock()
+	pid, err := getProcessInfoForPortNoCache(port)
 	if err != nil {
-		processCache[port] = cacheEntry{
+		portToPIDCacheMu.Lock()
+		portToPIDCache[port] = portPIDEntry{
 			createdAt: time.Now(),
 			err:       err,
 		}
-		processCacheMu.Unlock()
+		portToPIDCacheMu.Unlock()
 		return "", "", err
 	}
 
-	processCache[port] = cacheEntry{
-		name:      name,
-		bundleID:  bundleID,
-		createdAt: time.Now(),
-	}
-	processCacheMu.Unlock()
-
-	return name, bundleID, nil
+	return getMetadataForPID(pid)
 }
 
-func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
+func getProcessInfoForPortNoCache(port uint16) (int, error) {
 	// Retrieve list of pids running on system (returns size in bytes)
 	bytesCount := C.proc_listpids(C.PROC_ALL_PIDS, 0, nil, 0)
 	if bytesCount <= 0 {
-		return "", "", errors.New("failed to list pids")
+		return 0, errors.New("failed to list pids")
 	}
 
 	// Calculate number of PIDs from returned byte size
 	pidSize := C.int(unsafe.Sizeof(C.pid_t(0)))
 	pidsCount := bytesCount / pidSize
 	if pidsCount <= 0 {
-		return "", "", errors.New("failed to list pids: no pids allocated")
+		return 0, errors.New("failed to list pids: no pids allocated")
 	}
 
 	if int(pidsCount) > cap(pidsScratch) {
@@ -296,7 +383,7 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 
 	resPids := C.proc_listpids(C.PROC_ALL_PIDS, 0, unsafe.Pointer(&pidsScratch[0]), bytesCount)
 	if resPids <= 0 {
-		return "", "", errors.New("failed to list pids")
+		return 0, errors.New("failed to list pids")
 	}
 	actualPidsCount := int(resPids) / int(pidSize)
 	pids := pidsScratch
@@ -304,11 +391,10 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 		pids = pids[:actualPidsCount]
 	}
 
-	var targetName string
-	var targetBundleID string
+	var targetPID int
 	var targetFound bool
 
-	resolvedPIDs := make(map[C.pid_t]ProcessCacheEntry)
+	foundMappings := make(map[uint16]int)
 
 	for _, pid := range pids {
 		if pid == 0 {
@@ -349,53 +435,9 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 					// Use C helper to extract local port from the union in a compilation-safe way
 					localPort := uint16(C.get_socket_local_port(&sockInfo))
 					if localPort > 0 {
-						// Match! Find process executable path
-						entry, resolved := resolvedPIDs[pid]
-						if !resolved {
-							pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
-							ret := int(C.proc_pidpath(C.int(pid), unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
-							if ret > 0 {
-								procName := string(pathBuffer[:ret])
-
-								// Insecure/Spoofable Bundle ID Resolution fix:
-								// First query CoreFoundation/Security helper
-								cBundleID := C.get_bundle_id_for_pid(pid)
-								var bundleID string
-								if cBundleID != nil {
-									bundleID = C.GoString(cBundleID)
-									C.free(unsafe.Pointer(cBundleID))
-								} else {
-									bundleID = extractBundleID(procName)
-								}
-
-								if isLiteLLM(pid) {
-									if !strings.Contains(strings.ToLower(procName), "litellm") {
-										procName = procName + "-litellm"
-									}
-								}
-
-								entry = ProcessCacheEntry{
-									Name:     procName,
-									BundleID: bundleID,
-								}
-								resolvedPIDs[pid] = entry
-							} else {
-								continue
-							}
-						}
-
-						// Populate cache for all active ports discovered
-						processCacheMu.Lock()
-						processCache[localPort] = cacheEntry{
-							name:      entry.Name,
-							bundleID:  entry.BundleID,
-							createdAt: time.Now(),
-						}
-						processCacheMu.Unlock()
-
+						foundMappings[localPort] = int(pid)
 						if localPort == port {
-							targetName = entry.Name
-							targetBundleID = entry.BundleID
+							targetPID = int(pid)
 							targetFound = true
 						}
 					}
@@ -404,10 +446,20 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 		}
 	}
 
-	if targetFound {
-		return targetName, targetBundleID, nil
+	// Update the portToPIDCache with all found mappings
+	portToPIDCacheMu.Lock()
+	for p, pidVal := range foundMappings {
+		portToPIDCache[p] = portPIDEntry{
+			pid:       pidVal,
+			createdAt: time.Now(),
+		}
 	}
-	return "", "", fmt.Errorf("port %d not found in active sockets", port)
+	portToPIDCacheMu.Unlock()
+
+	if targetFound {
+		return targetPID, nil
+	}
+	return 0, fmt.Errorf("port %d not found in active sockets", port)
 }
 
 func extractBundleID(execPath string) string {

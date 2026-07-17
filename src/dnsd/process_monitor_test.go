@@ -134,9 +134,13 @@ func TestExtractBundleID(t *testing.T) {
 
 func TestProcessCacheTTL(t *testing.T) {
 	// Clear any existing cache entries
-	processCacheMu.Lock()
-	processCache = make(map[uint16]cacheEntry)
-	processCacheMu.Unlock()
+	portToPIDCacheMu.Lock()
+	portToPIDCache = make(map[uint16]portPIDEntry)
+	portToPIDCacheMu.Unlock()
+
+	pidMetadataCacheMu.Lock()
+	pidMetadataCache = make(map[int]pidMetadataEntry)
+	pidMetadataCacheMu.Unlock()
 
 	// Dynamically allocate a free ephemeral port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -147,13 +151,22 @@ func TestProcessCacheTTL(t *testing.T) {
 	ln.Close()
 
 	// Seed cache directly for the port
-	processCacheMu.Lock()
-	processCache[port] = cacheEntry{
-		name:      "cached_proc",
-		bundleID:  "cached_bundle",
+	portToPIDCacheMu.Lock()
+	portToPIDCache[port] = portPIDEntry{
+		pid:       12345,
 		createdAt: time.Now(),
 	}
-	processCacheMu.Unlock()
+	portToPIDCacheMu.Unlock()
+
+	pidMetadataCacheMu.Lock()
+	pidMetadataCache[12345] = pidMetadataEntry{
+		metadata: ProcessMetadata{
+			Name:     "cached_proc",
+			BundleID: "cached_bundle",
+		},
+		createdAt: time.Now(),
+	}
+	pidMetadataCacheMu.Unlock()
 
 	// Read and verify cache hit
 	name, bundleID, err := GetProcessInfoForPort(port)
@@ -165,11 +178,17 @@ func TestProcessCacheTTL(t *testing.T) {
 	}
 
 	// Expire cache manually
-	processCacheMu.Lock()
-	entry := processCache[port]
-	entry.createdAt = time.Now().Add(-6 * time.Second)
-	processCache[port] = entry
-	processCacheMu.Unlock()
+	portToPIDCacheMu.Lock()
+	pEntry := portToPIDCache[port]
+	pEntry.createdAt = time.Now().Add(-6 * time.Second)
+	portToPIDCache[port] = pEntry
+	portToPIDCacheMu.Unlock()
+
+	pidMetadataCacheMu.Lock()
+	mEntry := pidMetadataCache[12345]
+	mEntry.createdAt = time.Now().Add(-65 * time.Second)
+	pidMetadataCache[12345] = mEntry
+	pidMetadataCacheMu.Unlock()
 
 	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error)
 	_, _, err = GetProcessInfoForPort(port)
@@ -267,10 +286,10 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 	port1 := uint16(ln1.Addr().(*net.TCPAddr).Port)
 	port2 := uint16(ln2.Addr().(*net.TCPAddr).Port)
 
-	// Clear the process cache completely
-	processCacheMu.Lock()
-	processCache = make(map[uint16]cacheEntry)
-	processCacheMu.Unlock()
+	// Clear the portToPIDCache completely
+	portToPIDCacheMu.Lock()
+	portToPIDCache = make(map[uint16]portPIDEntry)
+	portToPIDCacheMu.Unlock()
 
 	// Query port 1. This should run a system scan and populate both port 1 and port 2.
 	_, _, err = GetProcessInfoForPort(port1)
@@ -278,15 +297,15 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 		t.Fatalf("Failed to get process info for port1: %v", err)
 	}
 
-	// Verify that port 2 is already in the cache!
-	processCacheMu.RLock()
-	entry2, found := processCache[port2]
-	processCacheMu.RUnlock()
+	// Verify that port 2 is already in the portToPIDCache!
+	portToPIDCacheMu.RLock()
+	entry2, found := portToPIDCache[port2]
+	portToPIDCacheMu.RUnlock()
 
 	if !found {
-		t.Errorf("Expected port 2 (%d) to be bulk populated in the cache after querying port 1 (%d), but it was not found", port2, port1)
-	} else if entry2.name == "" {
-		t.Errorf("Expected bulk-populated cache entry for port 2 to have a valid process name, got empty string")
+		t.Errorf("Expected port 2 (%d) to be bulk populated in the portToPIDCache after querying port 1 (%d), but it was not found", port2, port1)
+	} else if entry2.pid <= 0 {
+		t.Errorf("Expected bulk-populated portToPIDCache entry for port 2 to have a valid PID, got %d", entry2.pid)
 	}
 }
 
