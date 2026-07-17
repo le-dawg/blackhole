@@ -226,6 +226,12 @@ func init() {
 				}
 			}
 			pidMetadataCacheMu.Unlock()
+
+			bundleIDCacheMu.Lock()
+			if len(bundleIDCache) > 500 {
+				bundleIDCache = make(map[string]string)
+			}
+			bundleIDCacheMu.Unlock()
 		}
 	}()
 }
