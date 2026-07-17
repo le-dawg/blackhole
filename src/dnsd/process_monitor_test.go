@@ -3,7 +3,9 @@ package dnsd
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestProcessCorrelationInactive(t *testing.T) {
@@ -38,8 +40,18 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
 	}
 
-	if procName != expectedPath {
-		t.Errorf("Expected process name %q, got %q (bundleID: %q)", expectedPath, procName, bundleID)
+	evalExpected, err := filepath.EvalSymlinks(expectedPath)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks for expected path: %v", err)
+	}
+
+	evalGot, err := filepath.EvalSymlinks(procName)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks for returned process name: %v", err)
+	}
+
+	if evalGot != evalExpected {
+		t.Errorf("Expected process name %q (resolved: %q), got %q (resolved: %q) (bundleID: %q)", expectedPath, evalExpected, procName, evalGot, bundleID)
 	}
 }
 
@@ -67,7 +79,93 @@ func TestProcessCorrelationActiveUDP(t *testing.T) {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
 	}
 
-	if procName != expectedPath {
-		t.Errorf("Expected process name %q, got %q (bundleID: %q)", expectedPath, procName, bundleID)
+	evalExpected, err := filepath.EvalSymlinks(expectedPath)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks for expected path: %v", err)
+	}
+
+	evalGot, err := filepath.EvalSymlinks(procName)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks for returned process name: %v", err)
+	}
+
+	if evalGot != evalExpected {
+		t.Errorf("Expected process name %q (resolved: %q), got %q (resolved: %q) (bundleID: %q)", expectedPath, evalExpected, procName, evalGot, bundleID)
+	}
+}
+
+func TestExtractBundleID(t *testing.T) {
+	// Create a temporary directory structure mimicking an app bundle
+	tempDir, err := os.MkdirTemp("", "testbundle_*.app")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	contentsDir := filepath.Join(tempDir, "Contents")
+	if err := os.Mkdir(contentsDir, 0755); err != nil {
+		t.Fatalf("Failed to create Contents dir: %v", err)
+	}
+
+	plistContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.solution8.testapp</string>
+</dict>
+</plist>`
+
+	plistPath := filepath.Join(contentsDir, "Info.plist")
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+		t.Fatalf("Failed to write Info.plist: %v", err)
+	}
+
+	// Fake executable path inside the bundle
+	execPath := filepath.Join(contentsDir, "MacOS", "testapp")
+
+	bundleID := extractBundleID(execPath)
+	expectedBundleID := "com.solution8.testapp"
+	if bundleID != expectedBundleID {
+		t.Errorf("Expected bundle ID %q, got %q", expectedBundleID, bundleID)
+	}
+}
+
+func TestProcessCacheTTL(t *testing.T) {
+	// Clear any existing cache entries
+	processCacheMu.Lock()
+	processCache = make(map[uint16]cacheEntry)
+	processCacheMu.Unlock()
+
+	// Seed cache directly for a port
+	port := uint16(12345)
+	processCacheMu.Lock()
+	processCache[port] = cacheEntry{
+		name:      "cached_proc",
+		bundleID:  "cached_bundle",
+		createdAt: time.Now(),
+	}
+	processCacheMu.Unlock()
+
+	// Read and verify cache hit
+	name, bundleID, err := GetProcessInfoForPort(port)
+	if err != nil {
+		t.Fatalf("Expected no error from cached port lookup, got %v", err)
+	}
+	if name != "cached_proc" || bundleID != "cached_bundle" {
+		t.Errorf("Expected cached_proc and cached_bundle, got name=%q, bundleID=%q", name, bundleID)
+	}
+
+	// Expire cache manually
+	processCacheMu.Lock()
+	entry := processCache[port]
+	entry.createdAt = time.Now().Add(-6 * time.Second)
+	processCache[port] = entry
+	processCacheMu.Unlock()
+
+	// Verify that it no longer returns the cached values (since the port 12345 is inactive, it should return an error)
+	_, _, err = GetProcessInfoForPort(port)
+	if err == nil {
+		t.Errorf("Expected query to fail after cache expiration")
 	}
 }
