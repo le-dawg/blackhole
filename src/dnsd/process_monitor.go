@@ -192,8 +192,7 @@ var (
 	portToPIDCacheMu   sync.RWMutex
 	pidMetadataCache   = make(map[int]pidMetadataEntry)
 	pidMetadataCacheMu sync.RWMutex
-	pidLocks           = make(map[int]*sync.Mutex)
-	pidLocksMu         sync.Mutex
+	metadataResolveMu  sync.Mutex
 
 	processScanMu   sync.Mutex // For serializing system-wide scans
 	bundleIDCache   = make(map[string]string)
@@ -202,28 +201,37 @@ var (
 	fdsScratch      []C.struct_proc_fdinfo
 )
 
-func getMutexForPID(pid int) *sync.Mutex {
-	pidLocksMu.Lock()
-	defer pidLocksMu.Unlock()
-	mu, ok := pidLocks[pid]
-	if !ok {
-		mu = &sync.Mutex{}
-		pidLocks[pid] = mu
-	}
-	return mu
+func init() {
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		for range ticker.C {
+			now := time.Now()
+
+			portToPIDCacheMu.Lock()
+			for port, entry := range portToPIDCache {
+				ttl := 5 * time.Second
+				if entry.err != nil {
+					ttl = 2 * time.Second
+				}
+				if now.Sub(entry.createdAt) >= ttl {
+					delete(portToPIDCache, port)
+				}
+			}
+			portToPIDCacheMu.Unlock()
+
+			pidMetadataCacheMu.Lock()
+			for pid, entry := range pidMetadataCache {
+				if now.Sub(entry.createdAt) >= 1*time.Minute {
+					delete(pidMetadataCache, pid)
+				}
+			}
+			pidMetadataCacheMu.Unlock()
+		}
+	}()
 }
 
-func isLiteLLM(pid C.pid_t, localMap map[C.pid_t]bool) bool {
-	if localMap != nil {
-		if val, ok := localMap[pid]; ok {
-			return val
-		}
-	}
-	res := C.check_pid_litellm(pid) != 0
-	if localMap != nil {
-		localMap[pid] = res
-	}
-	return res
+func isLiteLLM(pid C.pid_t) bool {
+	return C.check_pid_litellm(pid) != 0
 }
 
 // CheckPIDLiteLLM is a wrapper around the C helper check_pid_litellm for testing purposes.
@@ -249,8 +257,7 @@ func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
 		bundleID = extractBundleID(procName)
 	}
 
-	localMap := make(map[C.pid_t]bool)
-	if isLiteLLM(C.pid_t(pid), localMap) {
+	if isLiteLLM(C.pid_t(pid)) {
 		if !strings.Contains(strings.ToLower(procName), "litellm") {
 			procName = procName + "-litellm"
 		}
@@ -274,9 +281,8 @@ func getMetadataForPID(pid int) (string, string, error) {
 		return entry.metadata.Name, entry.metadata.BundleID, nil
 	}
 
-	mu := getMutexForPID(pid)
-	mu.Lock()
-	defer mu.Unlock()
+	metadataResolveMu.Lock()
+	defer metadataResolveMu.Unlock()
 
 	// Double check
 	pidMetadataCacheMu.RLock()
