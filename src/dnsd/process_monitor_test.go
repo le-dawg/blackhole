@@ -3,6 +3,7 @@ package dnsd
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -167,5 +168,33 @@ func TestProcessCacheTTL(t *testing.T) {
 	_, _, err = GetProcessInfoForPort(port)
 	if err == nil {
 		t.Errorf("Expected query to fail after cache expiration")
+	}
+}
+
+func TestLiteLLMArgumentDetection(t *testing.T) {
+	// Try python3 first, fallback to python
+	pyPath, err := exec.LookPath("python3")
+	if err != nil {
+		pyPath, err = exec.LookPath("python")
+		if err != nil {
+			t.Skip("Python is not installed, skipping TestLiteLLMArgumentDetection")
+		}
+	}
+
+	cmd := exec.Command(pyPath, "-c", "import time; time.sleep(2)", "litellm")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start dummy Python process: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+	}()
+
+	// Wait a tiny bit for the process to be fully active
+	time.Sleep(100 * time.Millisecond)
+
+	// Call the C helper wrapper to verify argument detection
+	found := CheckPIDLiteLLM(cmd.Process.Pid)
+	if !found {
+		t.Errorf("Expected C helper to detect 'litellm' in arguments of PID %d", cmd.Process.Pid)
 	}
 }

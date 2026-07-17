@@ -47,6 +47,10 @@ static int check_pid_litellm(int pid) {
 		return 0;
 	}
 
+	if (size > 0) {
+		procargs[size - 1] = '\0';
+	}
+
 	int argc;
 	if (size < sizeof(argc)) {
 		free(procargs);
@@ -113,12 +117,21 @@ type cacheEntry struct {
 	name      string
 	bundleID  string
 	createdAt time.Time
+	err       error
 }
 
 var (
-	processCache   = make(map[uint16]cacheEntry)
-	processCacheMu sync.RWMutex
+	processCache    = make(map[uint16]cacheEntry)
+	processCacheMu  sync.RWMutex
+	processScanMu   sync.Mutex // For serializing system-wide scans
+	bundleIDCache   = make(map[string]string)
+	bundleIDCacheMu sync.RWMutex
 )
+
+// CheckPIDLiteLLM is a wrapper around the C helper check_pid_litellm for testing purposes.
+func CheckPIDLiteLLM(pid int) bool {
+	return C.check_pid_litellm(C.int(pid)) != 0
+}
 
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port
 // to its originating Process Name, Bundle ID (if applicable), and PID.
@@ -127,16 +140,52 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 	entry, found := processCache[port]
 	processCacheMu.RUnlock()
 
-	if found && time.Since(entry.createdAt) < 5*time.Second {
-		return entry.name, entry.bundleID, nil
+	if found {
+		ttl := 5 * time.Second
+		if entry.err != nil {
+			ttl = 2 * time.Second
+		}
+		if time.Since(entry.createdAt) < ttl {
+			if entry.err != nil {
+				return "", "", entry.err
+			}
+			return entry.name, entry.bundleID, nil
+		}
+	}
+
+	processScanMu.Lock()
+	defer processScanMu.Unlock()
+
+	// Double-check under scan lock
+	processCacheMu.RLock()
+	entry, found = processCache[port]
+	processCacheMu.RUnlock()
+
+	if found {
+		ttl := 5 * time.Second
+		if entry.err != nil {
+			ttl = 2 * time.Second
+		}
+		if time.Since(entry.createdAt) < ttl {
+			if entry.err != nil {
+				return "", "", entry.err
+			}
+			return entry.name, entry.bundleID, nil
+		}
 	}
 
 	name, bundleID, err := getProcessInfoForPortNoCache(port)
+
+	processCacheMu.Lock()
 	if err != nil {
+		processCache[port] = cacheEntry{
+			createdAt: time.Now(),
+			err:       err,
+		}
+		processCacheMu.Unlock()
 		return "", "", err
 	}
 
-	processCacheMu.Lock()
 	processCache[port] = cacheEntry{
 		name:      name,
 		bundleID:  bundleID,
@@ -234,6 +283,13 @@ func getProcessInfoForPortNoCache(port uint16) (string, string, error) {
 }
 
 func extractBundleID(execPath string) string {
+	bundleIDCacheMu.RLock()
+	cached, found := bundleIDCache[execPath]
+	bundleIDCacheMu.RUnlock()
+	if found {
+		return cached
+	}
+
 	idx := strings.Index(execPath, ".app/")
 	if idx == -1 {
 		return ""
@@ -262,7 +318,13 @@ func extractBundleID(execPath string) string {
 		}
 	}
 
-	return parsePlistXML(data)
+	resolved := parsePlistXML(data)
+
+	bundleIDCacheMu.Lock()
+	bundleIDCache[execPath] = resolved
+	bundleIDCacheMu.Unlock()
+
+	return resolved
 }
 
 func parsePlistXML(data []byte) string {
