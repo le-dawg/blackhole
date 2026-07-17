@@ -18,11 +18,6 @@ func TestProcessCorrelationInactive(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveTCP(t *testing.T) {
-	// Reset lastScanTime to avoid rate-limiting from previous tests
-	processScanMu.Lock()
-	lastScanTime = time.Time{}
-	processScanMu.Unlock()
-
 	// Start a TCP listener on an ephemeral port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -62,11 +57,6 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveUDP(t *testing.T) {
-	// Reset lastScanTime to avoid rate-limiting from previous tests
-	processScanMu.Lock()
-	lastScanTime = time.Time{}
-	processScanMu.Unlock()
-
 	// Start a UDP listener on an ephemeral port
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -143,11 +133,6 @@ func TestExtractBundleID(t *testing.T) {
 }
 
 func TestProcessCacheTTL(t *testing.T) {
-	// Reset lastScanTime to avoid rate-limiting from previous tests
-	processScanMu.Lock()
-	lastScanTime = time.Time{}
-	processScanMu.Unlock()
-
 	// Clear any existing cache entries
 	processCacheMu.Lock()
 	processCache = make(map[uint16]cacheEntry)
@@ -266,11 +251,6 @@ func TestLiteLLMArgumentDetection(t *testing.T) {
 }
 
 func TestProcessCacheBulkPopulate(t *testing.T) {
-	// Reset lastScanTime to avoid rate-limiting from previous tests
-	processScanMu.Lock()
-	lastScanTime = time.Time{}
-	processScanMu.Unlock()
-
 	// Start two TCP listeners on ephemeral ports
 	ln1, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -310,52 +290,40 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 	}
 }
 
-func TestProcessScanRateLimiting(t *testing.T) {
-	// Reset scan state
-	processScanMu.Lock()
-	lastScanTime = time.Time{}
-	processCache = make(map[uint16]cacheEntry)
-	processScanMu.Unlock()
-
-	// Get a dynamically allocated free port (inactive)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
+	// Setup temp directory structure
+	tmpDir, err := os.MkdirTemp("", "testbundle-*")
 	if err != nil {
-		t.Fatalf("Failed to listen: %v", err)
+		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	port1 := uint16(ln.Addr().(*net.TCPAddr).Port)
-	ln.Close()
+	defer os.RemoveAll(tmpDir)
 
-	// Query port 1. Since lastScanTime is zero, this must perform a scan and return error (port inactive)
-	_, _, err = GetProcessInfoForPort(port1)
-	if err == nil {
-		t.Errorf("Expected lookup on inactive port to fail")
-	}
-
-	// Verify lastScanTime was updated
-	processScanMu.Lock()
-	scanTime1 := lastScanTime
-	processScanMu.Unlock()
-	if scanTime1.IsZero() {
-		t.Fatalf("Expected lastScanTime to be updated after scan")
+	// Scenario 1: Nested app bundle with case insensitivity: /Parent.app/Contents/Resources/Nested.APP/Contents/MacOS/exec
+	nestedAppDir := filepath.Join(tmpDir, "Parent.app", "Contents", "Resources", "Nested.APP")
+	contentsDir := filepath.Join(nestedAppDir, "Contents")
+	if err := os.MkdirAll(filepath.Join(contentsDir, "MacOS"), 0755); err != nil {
+		t.Fatalf("Failed to create directory: %v", err)
 	}
 
-	// Immediately query another inactive port. It should trigger the rate limit and fail instantly without scanning.
-	port2 := port1 + 1
-	if port2 == 0 {
-		port2 = 1000
+	plistContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.solution8.nestedapp</string>
+</dict>
+</plist>`
+
+	plistPath := filepath.Join(contentsDir, "Info.plist")
+	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+		t.Fatalf("Failed to write Info.plist: %v", err)
 	}
 
-	_, _, err = GetProcessInfoForPort(port2)
-	if err == nil {
-		t.Errorf("Expected rate-limited lookup to fail")
-	}
-
-	// Verify that lastScanTime did NOT change, meaning no new scan was run
-	processScanMu.Lock()
-	scanTime2 := lastScanTime
-	processScanMu.Unlock()
-	if !scanTime2.Equal(scanTime1) {
-		t.Errorf("Expected scan to be rate-limited (lastScanTime unchanged), but scan time changed: %v -> %v", scanTime1, scanTime2)
+	execPath := filepath.Join(contentsDir, "MacOS", "nestedexec")
+	bundleID := extractBundleID(execPath)
+	expectedBundleID := "com.solution8.nestedapp"
+	if bundleID != expectedBundleID {
+		t.Errorf("Expected nested bundle ID %q, got %q", expectedBundleID, bundleID)
 	}
 }
 

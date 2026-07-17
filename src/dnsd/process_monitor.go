@@ -154,7 +154,6 @@ var (
 	processScanMu   sync.Mutex // For serializing system-wide scans
 	bundleIDCache   = make(map[string]string)
 	bundleIDCacheMu sync.RWMutex
-	lastScanTime    time.Time
 	pidsScratch     []C.int
 	fdsScratch      []C.struct_proc_fdinfo
 )
@@ -205,15 +204,7 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 		}
 	}
 
-	// Rate-limit system-wide scans:
-	// If a scan has occurred within 500ms, do not scan again.
-	// If the port was not found in the cached active ports, return an error immediately.
-	if !lastScanTime.IsZero() && time.Since(lastScanTime) < 500*time.Millisecond {
-		return "", "", fmt.Errorf("port %d not found in active sockets", port)
-	}
-
 	name, bundleID, err := getProcessInfoForPortNoCache(port)
-	lastScanTime = time.Now()
 
 	processCacheMu.Lock()
 	if err != nil {
@@ -379,7 +370,7 @@ func extractBundleID(execPath string) string {
 		return cached
 	}
 
-	idx := strings.Index(execPath, ".app/")
+	idx := strings.LastIndex(strings.ToLower(execPath), ".app/")
 	if idx == -1 {
 		return ""
 	}
