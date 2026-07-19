@@ -27,10 +27,12 @@ struct BlackholeApp: App {
         .menuBarExtraAccess(isPresented: $isMenuPresented)
         .menuBarExtraStyle(.window)
         .onChange(of: isDnsActive) { _, newValue in
-            if newValue {
-                setLocalDNS()
-            } else {
-                clearLocalDNS()
+            Task(priority: .userInitiated) {
+                if newValue {
+                    setLocalDNS()
+                } else {
+                    clearLocalDNS()
+                }
             }
         }
     }
