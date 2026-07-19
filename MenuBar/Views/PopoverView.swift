@@ -4,16 +4,7 @@ struct PopoverView: View {
     @Binding var isActive: Bool
     let isMenuPresented: Bool
     @State private var selectedTab = 0
-    @State private var isInitialLoad = false
-    
-    // Example exclusion apps list
-    @State private var excludedApps = [
-        ExcludedApp(name: "Safari", bundleId: "com.apple.Safari", icon: "safari", isExcluded: false),
-        ExcludedApp(name: "Google Chrome", bundleId: "com.google.Chrome", icon: "globe", isExcluded: true),
-        ExcludedApp(name: "Slack", bundleId: "com.tinyspeck.slackmacgap", icon: "message.fill", isExcluded: false),
-        ExcludedApp(name: "Spotify", bundleId: "com.spotify.client", icon: "music.note", isExcluded: false),
-        ExcludedApp(name: "Terminal", bundleId: "com.apple.Terminal", icon: "terminal.fill", isExcluded: false)
-    ]
+    @Bindable var model: ExclusionModel
     
     @State private var newAppName = ""
     @State private var newBundleId = ""
@@ -87,6 +78,17 @@ struct PopoverView: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Spacer()
+                Button("Quit") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .font(.caption2)
+                .foregroundColor(.red)
+                .buttonStyle(.plain)
+                
+                Text("|")
+                    .font(.caption2)
+                    .foregroundColor(.secondary.opacity(0.5))
+                
                 Link(destination: URL(string: "https://github.com")!) {
                     HStack(spacing: 3) {
                         Text("Documentation")
@@ -102,57 +104,9 @@ struct PopoverView: View {
         }
         .frame(width: 320, height: 400)
         .foregroundColor(.primary)
-        .onAppear {
-            loadExclusions()
-        }
-        .onChange(of: excludedApps) {
-            if !isInitialLoad {
-                saveExclusions()
-            }
-        }
-    }
-    
-    private func getExclusionsFilePath() -> URL? {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        return appSupport.appendingPathComponent("blackhole/exclusions.json")
-    }
-    
-    private func loadExclusions() {
-        guard let fileURL = getExclusionsFilePath() else { return }
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            saveExclusions()
-            return
-        }
-        Task(priority: .background) {
-            do {
-                let data = try Data(contentsOf: fileURL)
-                let decoded = try JSONDecoder().decode([ExcludedApp].self, from: data)
-                await MainActor.run {
-                    self.isInitialLoad = true
-                    self.excludedApps = decoded
-                    self.isInitialLoad = false
-                }
-            } catch {
-                print("Error loading exclusions: \(error)")
-            }
-        }
-    }
-    
-    private func saveExclusions() {
-        guard let fileURL = getExclusionsFilePath() else { return }
-        let currentApps = excludedApps
-        Task(priority: .background) {
-            let directoryURL = fileURL.deletingLastPathComponent()
-            do {
-                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = .prettyPrinted
-                let data = try encoder.encode(currentApps)
-                try data.write(to: fileURL, options: .atomic)
-            } catch {
-                print("Error saving exclusions: \(error)")
+        .onChange(of: model.excludedApps) {
+            if !model.isInitialLoad {
+                model.saveExclusionsDebounced()
             }
         }
     }
@@ -162,9 +116,9 @@ struct PopoverView: View {
         let trimmedBundle = newBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedBundle.isEmpty else { return }
         
-        if !excludedApps.contains(where: { $0.bundleId == trimmedBundle }) {
+        if !model.excludedApps.contains(where: { $0.bundleId == trimmedBundle }) {
             let newApp = ExcludedApp(name: trimmedName, bundleId: trimmedBundle, icon: "macwindow", isExcluded: true)
-            excludedApps.append(newApp)
+            model.excludedApps.append(newApp)
         }
         
         newAppName = ""
@@ -172,7 +126,7 @@ struct PopoverView: View {
     }
     
     private func deleteApp(_ app: ExcludedApp) {
-        excludedApps.removeAll { $0.bundleId == app.bundleId }
+        model.excludedApps.removeAll { $0.bundleId == app.bundleId }
     }
     
     private var statusTabContent: some View {
@@ -257,7 +211,7 @@ struct PopoverView: View {
                 .padding(.bottom, 4)
             
             VStack(spacing: 0) {
-                ForEach($excludedApps) { $app in
+                ForEach($model.excludedApps) { $app in
                     HStack(spacing: 12) {
                         Image(systemName: app.icon)
                             .font(.body)
@@ -280,6 +234,7 @@ struct PopoverView: View {
                         Toggle("", isOn: $app.isExcluded)
                             .toggleStyle(.switch)
                             .scaleEffect(0.8)
+                            .accessibilityLabel("Exclude \(app.name) from DNS protection")
                         
                         Button(action: {
                             deleteApp(app)
@@ -292,10 +247,11 @@ struct PopoverView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Delete exclusion for \(app.name)")
                     }
                     .padding(.vertical, 8)
                     
-                    if app.bundleId != excludedApps.last?.bundleId {
+                    if app.bundleId != model.excludedApps.last?.bundleId {
                         Divider()
                             .background(Color.white.opacity(0.05))
                     }
@@ -327,6 +283,7 @@ struct PopoverView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
+                        .onSubmit(addExclusion)
                     
                     TextField("Bundle ID / Process / CLI Command", text: $newBundleId)
                         .textFieldStyle(.plain)
@@ -338,6 +295,7 @@ struct PopoverView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
+                        .onSubmit(addExclusion)
                     
                     Button(action: addExclusion) {
                         Text("Add")
@@ -367,14 +325,6 @@ struct PopoverView: View {
 }
 
 // Support Structures & Subviews
-
-struct ExcludedApp: Identifiable, Codable, Equatable {
-    var id: String { bundleId }
-    let name: String
-    let bundleId: String
-    let icon: String
-    var isExcluded: Bool
-}
 
 struct TabButton: View {
     let title: String
@@ -434,11 +384,6 @@ struct StatusIndicator: View {
             }
         }
         .frame(width: 24, height: 24)
-        .onChange(of: isMenuPresented) { _, newValue in
-            if !newValue {
-                pulse = false
-            }
-        }
     }
 }
 

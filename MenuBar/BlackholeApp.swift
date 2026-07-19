@@ -5,10 +5,11 @@ import MenuBarExtraAccess
 struct BlackholeApp: App {
     @State private var isMenuPresented = false
     @State private var isDnsActive = false
+    @State private var exclusionModel = ExclusionModel()
     
     var body: some Scene {
         MenuBarExtra("Blackhole", systemImage: "circle.circle") {
-            PopoverView(isActive: $isDnsActive, isMenuPresented: isMenuPresented)
+            PopoverView(isActive: $isDnsActive, isMenuPresented: isMenuPresented, model: exclusionModel)
                 .background(
                     VisualEffectView(material: .popover, blendingMode: .behindWindow)
                 )
