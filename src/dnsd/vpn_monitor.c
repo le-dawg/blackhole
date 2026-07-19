@@ -7,6 +7,7 @@
 // Forward declarations of exported Go functions
 void goDNSCallback(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info);
 void goMonitorStarted(int status);
+void goMonitorStopped(void);
 
 static void my_callback(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info) {
 	goDNSCallback(store, changedKeys, info);
@@ -75,7 +76,7 @@ int start_monitoring(const char* name) {
 			break;
 		}
 
-		CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, true);
+		CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.0, true);
 	}
 
 	pthread_mutex_lock(&g_monitorMutex);
@@ -84,6 +85,7 @@ int start_monitoring(const char* name) {
 	g_runLoop = NULL;
 	pthread_mutex_unlock(&g_monitorMutex);
 
+	goMonitorStopped();
 	return 0;
 }
 

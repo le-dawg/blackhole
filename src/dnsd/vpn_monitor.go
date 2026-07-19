@@ -18,12 +18,21 @@ import (
 	"unsafe"
 )
 
+type monitorState int
+
+const (
+	stateStopped monitorState = iota
+	stateStarting
+	stateMonitoring
+)
+
 var (
 	mu               sync.Mutex
 	vpnCallback      func([]string)
 	lastDNSAddresses []string
-	isMonitoring     bool
+	state            monitorState
 	monitorChan      chan int
+	monitorDone      chan struct{}
 )
 
 //export goMonitorStarted
@@ -31,6 +40,20 @@ func goMonitorStarted(status C.int) {
 	select {
 	case monitorChan <- int(status):
 	default:
+	}
+}
+
+//export goMonitorStopped
+func goMonitorStopped() {
+	mu.Lock()
+	defer mu.Unlock()
+	if monitorDone != nil {
+		select {
+		case <-monitorDone:
+			// Already closed
+		default:
+			close(monitorDone)
+		}
 	}
 }
 
@@ -126,10 +149,11 @@ func getDNSServers(store C.SCDynamicStoreRef) []string {
 // for network DNS changes in a background goroutine.
 func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 	mu.Lock()
-	defer mu.Unlock()
-	if isMonitoring {
+	if state != stateStopped {
+		mu.Unlock()
 		return nil
 	}
+	state = stateStarting
 
 	vpnCallback = onUpstreamsChanged
 	// Initialize the lastDNSAddresses with the current system DNS configuration
@@ -141,6 +165,8 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 	lastDNSAddresses = initialServers
 
 	monitorChan = make(chan int, 1)
+	monitorDone = make(chan struct{}, 1)
+	mu.Unlock()
 
 	go func() {
 		cName := C.CString("blackhole-dnsd")
@@ -152,22 +178,33 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 
 	// Block until goMonitorStarted is called, ensuring the run loop is fully initialized
 	status := <-monitorChan
+	
+	mu.Lock()
+	defer mu.Unlock()
 	if status != 0 {
+		state = stateStopped
 		vpnCallback = nil
 		return fmt.Errorf("failed to start SCDynamicStore monitor: C status %d", status)
 	}
-	isMonitoring = true
+	state = stateMonitoring
 	return nil
 }
 
 // StopVPNMonitor stops the background dynamic store monitoring loop.
 func StopVPNMonitor() {
 	mu.Lock()
-	defer mu.Unlock()
-	if !isMonitoring {
+	if state != stateMonitoring {
+		mu.Unlock()
 		return
 	}
 	C.stop_monitoring()
-	isMonitoring = false
+	mu.Unlock()
+
+	// Wait for the background C thread to fully clean up and exit
+	<-monitorDone
+
+	mu.Lock()
+	state = stateStopped
 	vpnCallback = nil
+	mu.Unlock()
 }
