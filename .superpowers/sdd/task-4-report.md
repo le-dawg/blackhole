@@ -58,3 +58,31 @@ We implemented the SwiftUI Menu Bar macOS client application scaffolding, integr
 ### Compilation Verification
 - **Command:** `swift build` in `MenuBar/`
 - **Result:** Successfully compiled with exit code 0 under Swift 6.1.2 targeting macOS 15.0.
+
+## Final Fixes and Refactor (July 19, 2026)
+
+We applied final optimizations, state lifting, and design refinements to align with Task 4's strict specifications and Swift 6 concurrency requirements.
+
+1. **State Lifting to Observable Pattern**:
+   - Created the shared `@Observable` and `@MainActor` isolated class `ExclusionModel` in [MenuBar/Models/ExclusionModel.swift](file:///Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/Models/ExclusionModel.swift).
+   - Moved the `ExcludedApp` model representation to the shared class file and made it conform to `Sendable`.
+   - The model holds the `@Observation` tracked property `excludedApps` and the `isInitialLoad` flag.
+   - Standardized the persistence layer paths to resolve sandboxed-safe user domain Application Support subdirectory: `~/Library/Application Support/blackhole/exclusions.json`.
+   - Added `saveExclusionsDebounced()` using standard Task-based sleeping and cancellation routines.
+   - Fixed the initial load race condition by resetting `isInitialLoad = false` deferred inside a `DispatchQueue.main.async` block on the main actor thread during file read callbacks.
+
+2. **Strict Swift 6 Concurrency Compliance**:
+   - Configured `ExclusionModel` with `@MainActor` to ensure UI state modifications occur safely on the main thread.
+   - Handled expensive disk I/O operations (`Data(contentsOf:)` and file writing) inside detached, non-isolated background tasks (`Task.detached`), passing copies of `Sendable` structs (`ExcludedApp` list and `URL` paths) to completely avoid data races.
+
+3. **UI Updates & Cleanups**:
+   - Persisted the model at the root level of the app inside [MenuBar/BlackholeApp.swift](file:///Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/BlackholeApp.swift) via `@State private var exclusionModel = ExclusionModel()` and passed it as a parameter to the popover views.
+   - Declared `model` as `@Bindable var model: ExclusionModel` in [MenuBar/Views/PopoverView.swift](file:///Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/Views/PopoverView.swift), deleting local state caches, file paths, and load/save helper methods.
+   - Appended a dynamic, styled "Quit" button into the popover's bottom footer invoking `NSApplication.shared.terminate(nil)`.
+   - Added descriptive `.accessibilityLabel` to list toggles and delete buttons.
+   - Injected `.onSubmit(addExclusion)` on both Custom Exclusion TextFields to submit inputs cleanly when pressing the enter key.
+   - Eliminated the redundant `.onChange(of: isMenuPresented)` block inside `StatusIndicator`.
+
+### Build Verification
+- **Command:** `swift build` in `MenuBar/`
+- **Result:** Successfully compiled with exit code 0 under Swift 6 with strict concurrency checks enabled.
