@@ -208,9 +208,4 @@ func StopVPNMonitor() {
 
 	// Wait for the background C thread to fully clean up and exit
 	<-monitorDone
-
-	mu.Lock()
-	state = stateStopped
-	vpnCallback = nil
-	mu.Unlock()
 }
