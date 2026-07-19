@@ -10,7 +10,7 @@ struct BlackholeApp: App {
         MenuBarExtra("Blackhole", systemImage: "circle.circle") {
             PopoverView(isActive: $isDnsActive)
                 .background(
-                    VisualEffectView(material: .ultraThinMaterial, blendingMode: .behindWindow)
+                    VisualEffectView(material: .popover, blendingMode: .behindWindow)
                 )
                 .cornerRadius(16)
                 .overlay(
@@ -19,8 +19,8 @@ struct BlackholeApp: App {
                 )
                 .shadow(color: Color.black.opacity(0.15), radius: 15)
         }
-        .menuBarExtraStyle(.window)
         .menuBarExtraAccess(isPresented: $isMenuPresented)
+        .menuBarExtraStyle(.window)
     }
 }
 
