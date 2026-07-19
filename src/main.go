@@ -22,14 +22,21 @@ var (
 
 func main() {
     port := flag.Int("port", 5353, "UDP port to listen on")
+    exclusionsPathFlag := flag.String("exclusions", "", "Path to exclusions JSON file")
     flag.Parse()
 
-    // Resolve exclusions path inside standard macOS Application Support
-    homeDir, err := os.UserHomeDir()
-    if err != nil {
-        log.Fatalf("Failed to get user home directory: %v", err)
+    var exclusionsPath string
+    if *exclusionsPathFlag != "" {
+        exclusionsPath = *exclusionsPathFlag
+    } else {
+        homeDir, err := os.UserHomeDir()
+        if err != nil {
+            log.Printf("Warning: Failed to get user home directory: %v", err)
+            exclusionsPath = "/var/root/Library/Application Support/blackhole/exclusions.json"
+        } else {
+            exclusionsPath = filepath.Join(homeDir, "Library/Application Support/blackhole/exclusions.json")
+        }
     }
-    exclusionsPath := filepath.Join(homeDir, "Library/Application Support/blackhole/exclusions.json")
 
     // Initialize resolver with default upstreams
     r := dnsd.NewResolver(upstreams)

@@ -9,6 +9,8 @@
         <string>/usr/local/bin/blackhole-dnsd</string>
         <string>-port</string>
         <string>53</string>
+        <string>-exclusions</string>
+        <string>/Users/thedawgctor/Library/Application Support/blackhole/exclusions.json</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
