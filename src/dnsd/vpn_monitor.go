@@ -14,6 +14,7 @@ import "C"
 import (
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"unsafe"
 )
@@ -24,6 +25,7 @@ const (
 	stateStopped monitorState = iota
 	stateStarting
 	stateMonitoring
+	stateStopping
 )
 
 var (
@@ -47,6 +49,8 @@ func goMonitorStarted(status C.int) {
 func goMonitorStopped() {
 	mu.Lock()
 	defer mu.Unlock()
+	state = stateStopped
+	vpnCallback = nil
 	if monitorDone != nil {
 		select {
 		case <-monitorDone:
@@ -169,6 +173,7 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 	mu.Unlock()
 
 	go func() {
+		runtime.LockOSThread()
 		cName := C.CString("blackhole-dnsd")
 		defer C.free(unsafe.Pointer(cName))
 
@@ -197,6 +202,7 @@ func StopVPNMonitor() {
 		mu.Unlock()
 		return
 	}
+	state = stateStopping
 	C.stop_monitoring()
 	mu.Unlock()
 
