@@ -1,21 +1,25 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include "_cgo_export.h"
 
 // Forward declarations of exported Go functions
 void goDNSCallback(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info);
-void goMonitorStarted(void);
+void goMonitorStarted(int status);
 
 static void my_callback(SCDynamicStoreRef store, CFArrayRef changedKeys, void *info) {
 	goDNSCallback(store, changedKeys, info);
 }
 
+static pthread_mutex_t g_monitorMutex = PTHREAD_MUTEX_INITIALIZER;
 static CFRunLoopRef g_runLoop = NULL;
+static volatile int g_shouldStop = 0;
 
 int start_monitoring(const char* name) {
 	CFStringRef nameStr = CFStringCreateWithCString(kCFAllocatorDefault, name, kCFStringEncodingUTF8);
 	if (!nameStr) {
-		goMonitorStarted();
+		goMonitorStarted(-1);
 		return -1;
 	}
 
@@ -23,14 +27,14 @@ int start_monitoring(const char* name) {
 	SCDynamicStoreRef store = SCDynamicStoreCreate(kCFAllocatorDefault, nameStr, my_callback, &context);
 	CFRelease(nameStr);
 	if (!store) {
-		goMonitorStarted();
+		goMonitorStarted(-2);
 		return -1;
 	}
 
 	CFStringRef pattern = CFStringCreateWithCString(kCFAllocatorDefault, "State:/Network/Global/DNS", kCFStringEncodingUTF8);
 	if (!pattern) {
 		CFRelease(store);
-		goMonitorStarted();
+		goMonitorStarted(-3);
 		return -1;
 	}
 
@@ -38,7 +42,7 @@ int start_monitoring(const char* name) {
 	CFRelease(pattern);
 	if (!keys) {
 		CFRelease(store);
-		goMonitorStarted();
+		goMonitorStarted(-4);
 		return -1;
 	}
 
@@ -48,31 +52,48 @@ int start_monitoring(const char* name) {
 	CFRunLoopSourceRef rls = SCDynamicStoreCreateRunLoopSource(kCFAllocatorDefault, store, 0);
 	CFRelease(store);
 	if (!rls) {
-		goMonitorStarted();
+		goMonitorStarted(-5);
 		return -1;
 	}
 
+	pthread_mutex_lock(&g_monitorMutex);
+	g_shouldStop = 0;
 	CFRunLoopRef rl = CFRunLoopGetCurrent();
 	g_runLoop = rl;
 	CFRunLoopAddSource(rl, rls, kCFRunLoopCommonModes);
+	pthread_mutex_unlock(&g_monitorMutex);
 
-	// Notify Go that g_runLoop is initialized and source is added
-	goMonitorStarted();
+	// Notify Go that g_runLoop is initialized and source is added successfully
+	goMonitorStarted(0);
 
-	CFRunLoopRun();
+	while (1) {
+		pthread_mutex_lock(&g_monitorMutex);
+		int stop = g_shouldStop;
+		pthread_mutex_unlock(&g_monitorMutex);
 
-	// Clean up after CFRunLoopRun has returned
+		if (stop) {
+			break;
+		}
+
+		CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.5, true);
+	}
+
+	pthread_mutex_lock(&g_monitorMutex);
 	CFRunLoopRemoveSource(rl, rls, kCFRunLoopCommonModes);
 	CFRelease(rls);
+	g_runLoop = NULL;
+	pthread_mutex_unlock(&g_monitorMutex);
 
 	return 0;
 }
 
 void stop_monitoring(void) {
+	pthread_mutex_lock(&g_monitorMutex);
+	g_shouldStop = 1;
 	if (g_runLoop) {
 		CFRunLoopStop(g_runLoop);
-		g_runLoop = NULL;
 	}
+	pthread_mutex_unlock(&g_monitorMutex);
 }
 
 CFArrayRef copy_dns_servers(SCDynamicStoreRef store) {

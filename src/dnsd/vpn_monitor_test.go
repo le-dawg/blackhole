@@ -7,9 +7,12 @@ import (
 
 func TestVPNMonitorInterface(t *testing.T) {
 	triggered := false
-	StartVPNMonitor(func(servers []string) {
+	err := StartVPNMonitor(func(servers []string) {
 		triggered = true
 	})
+	if err != nil {
+		t.Fatalf("StartVPNMonitor failed: %v", err)
+	}
 	defer StopVPNMonitor()
 
 	// Wait briefly to make sure goroutine starts but doesn't trigger initial callback
@@ -21,7 +24,10 @@ func TestVPNMonitorInterface(t *testing.T) {
 }
 
 func TestVPNMonitorStop(t *testing.T) {
-	StartVPNMonitor(func(servers []string) {})
+	err := StartVPNMonitor(func(servers []string) {})
+	if err != nil {
+		t.Fatalf("StartVPNMonitor failed: %v", err)
+	}
 	StopVPNMonitor()
 }
 
@@ -29,7 +35,7 @@ func TestVPNMonitorConcurrent(t *testing.T) {
 	// Start & Stop multiple times concurrently to verify no race conditions/panics
 	for i := 0; i < 5; i++ {
 		go func() {
-			StartVPNMonitor(func(servers []string) {})
+			_ = StartVPNMonitor(func(servers []string) {})
 		}()
 		go func() {
 			StopVPNMonitor()

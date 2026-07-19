@@ -12,6 +12,7 @@ CFArrayRef copy_dns_servers(SCDynamicStoreRef store);
 */
 import "C"
 import (
+	"fmt"
 	"log"
 	"sync"
 	"unsafe"
@@ -22,12 +23,15 @@ var (
 	vpnCallback      func([]string)
 	lastDNSAddresses []string
 	isMonitoring     bool
-	monitorChan      chan struct{}
+	monitorChan      chan int
 )
 
 //export goMonitorStarted
-func goMonitorStarted() {
-	close(monitorChan)
+func goMonitorStarted(status C.int) {
+	select {
+	case monitorChan <- int(status):
+	default:
+	}
 }
 
 //export goDNSCallback
@@ -120,11 +124,11 @@ func getDNSServers(store C.SCDynamicStoreRef) []string {
 
 // StartVPNMonitor sets up the global callback and begins monitoring the macOS SCDynamicStore
 // for network DNS changes in a background goroutine.
-func StartVPNMonitor(onUpstreamsChanged func([]string)) {
+func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 	mu.Lock()
 	defer mu.Unlock()
 	if isMonitoring {
-		return
+		return nil
 	}
 
 	vpnCallback = onUpstreamsChanged
@@ -136,7 +140,7 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) {
 	}
 	lastDNSAddresses = initialServers
 
-	monitorChan = make(chan struct{})
+	monitorChan = make(chan int, 1)
 
 	go func() {
 		cName := C.CString("blackhole-dnsd")
@@ -147,8 +151,13 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) {
 	}()
 
 	// Block until goMonitorStarted is called, ensuring the run loop is fully initialized
-	<-monitorChan
+	status := <-monitorChan
+	if status != 0 {
+		vpnCallback = nil
+		return fmt.Errorf("failed to start SCDynamicStore monitor: C status %d", status)
+	}
 	isMonitoring = true
+	return nil
 }
 
 // StopVPNMonitor stops the background dynamic store monitoring loop.
@@ -160,4 +169,5 @@ func StopVPNMonitor() {
 	}
 	C.stop_monitoring()
 	isMonitoring = false
+	vpnCallback = nil
 }
