@@ -25,11 +25,13 @@ func main() {
     exclusionsPathFlag := flag.String("exclusions", "", "Path to exclusions JSON file")
     flag.Parse()
 
+    var err error
     var exclusionsPath string
     if *exclusionsPathFlag != "" {
         exclusionsPath = *exclusionsPathFlag
     } else {
-        homeDir, err := os.UserHomeDir()
+        var homeDir string
+        homeDir, err = os.UserHomeDir()
         if err != nil {
             log.Printf("Warning: Failed to get user home directory: %v", err)
             exclusionsPath = "/var/root/Library/Application Support/blackhole/exclusions.json"
