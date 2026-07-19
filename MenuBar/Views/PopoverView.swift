@@ -13,6 +13,9 @@ struct PopoverView: View {
         ExcludedApp(name: "Terminal", bundleId: "com.apple.Terminal", icon: "terminal.fill", isExcluded: false)
     ]
     
+    @State private var newAppName = ""
+    @State private var newBundleId = ""
+    
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -39,6 +42,7 @@ struct PopoverView: View {
                     .toggleStyle(.switch)
                     .tint(.blue)
                     .scaleEffect(0.9)
+                    .accessibilityLabel("Enable DNS Protection")
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
@@ -96,6 +100,64 @@ struct PopoverView: View {
         }
         .frame(width: 320, height: 400)
         .foregroundColor(.primary)
+        .onAppear {
+            loadExclusions()
+        }
+        .onChange(of: excludedApps) {
+            saveExclusions()
+        }
+    }
+    
+    private func getExclusionsFilePath() -> URL? {
+        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
+        return homeDirectory.appendingPathComponent(".config/blackhole/exclusions.json")
+    }
+    
+    private func loadExclusions() {
+        guard let fileURL = getExclusionsFilePath() else { return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            saveExclusions()
+            return
+        }
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let decoded = try JSONDecoder().decode([ExcludedApp].self, from: data)
+            self.excludedApps = decoded
+        } catch {
+            print("Error loading exclusions: \(error)")
+        }
+    }
+    
+    private func saveExclusions() {
+        guard let fileURL = getExclusionsFilePath() else { return }
+        let directoryURL = fileURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = .prettyPrinted
+            let data = try encoder.encode(excludedApps)
+            try data.write(to: fileURL, options: .atomic)
+        } catch {
+            print("Error saving exclusions: \(error)")
+        }
+    }
+    
+    private func addExclusion() {
+        let trimmedName = newAppName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBundle = newBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedBundle.isEmpty else { return }
+        
+        if !excludedApps.contains(where: { $0.bundleId == trimmedBundle }) {
+            let newApp = ExcludedApp(name: trimmedName, bundleId: trimmedBundle, icon: "macwindow", isExcluded: true)
+            excludedApps.append(newApp)
+        }
+        
+        newAppName = ""
+        newBundleId = ""
+    }
+    
+    private func deleteApp(_ app: ExcludedApp) {
+        excludedApps.removeAll { $0.bundleId == app.bundleId }
     }
     
     private var statusTabContent: some View {
@@ -187,7 +249,7 @@ struct PopoverView: View {
                             .foregroundColor(.blue)
                             .frame(width: 24, height: 24)
                             .background(Color.white.opacity(0.05))
-                            .cornerRadius(6)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                         
                         VStack(alignment: .leading, spacing: 1) {
                             Text(app.name)
@@ -203,10 +265,22 @@ struct PopoverView: View {
                         Toggle("", isOn: $app.isExcluded)
                             .toggleStyle(.switch)
                             .scaleEffect(0.8)
+                        
+                        Button(action: {
+                            deleteApp(app)
+                        }) {
+                            Image(systemName: "trash")
+                                .font(.footnote)
+                                .foregroundColor(.red.opacity(0.8))
+                                .frame(width: 24, height: 24)
+                                .background(Color.white.opacity(0.05))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding(.vertical, 8)
                     
-                    if app.id != excludedApps.last?.id {
+                    if app.bundleId != excludedApps.last?.bundleId {
                         Divider()
                             .background(Color.white.opacity(0.05))
                     }
@@ -214,10 +288,64 @@ struct PopoverView: View {
             }
             .padding(.horizontal, 12)
             .background(Color.white.opacity(0.03))
-            .cornerRadius(12)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(Color.white.opacity(0.05), lineWidth: 1)
+            )
+            
+            // Add Custom Exclusion Section
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Add Custom Exclusion")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+                
+                HStack(spacing: 8) {
+                    TextField("App Name", text: $newAppName)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                    
+                    TextField("Bundle ID", text: $newBundleId)
+                        .textFieldStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color.white.opacity(0.04))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                    
+                    Button(action: addExclusion) {
+                        Text("Add")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                (newAppName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || newBundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) ? Color.gray.opacity(0.3) : Color.blue
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(newAppName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || newBundleId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .padding(10)
+            .background(Color.white.opacity(0.02))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.04), lineWidth: 1)
             )
         }
     }
@@ -225,8 +353,8 @@ struct PopoverView: View {
 
 // Support Structures & Subviews
 
-struct ExcludedApp: Identifiable {
-    let id = UUID()
+struct ExcludedApp: Identifiable, Codable, Equatable {
+    var id: String { bundleId }
     let name: String
     let bundleId: String
     let icon: String
@@ -270,20 +398,28 @@ struct StatusIndicator: View {
                 .fill(isActive ? Color.green : Color.gray)
                 .frame(width: 12, height: 12)
             
-            Circle()
-                .stroke(isActive ? Color.green : Color.gray, lineWidth: 2)
-                .frame(width: 24, height: 24)
-                .scaleEffect(pulse && isActive ? 1.2 : 0.8)
-                .opacity(pulse && isActive ? 0.0 : 0.8)
+            if isActive {
+                Circle()
+                    .stroke(Color.green, lineWidth: 2)
+                    .frame(width: 24, height: 24)
+                    .scaleEffect(pulse ? 1.2 : 0.8)
+                    .opacity(pulse ? 0.0 : 0.8)
+                    .onAppear {
+                        withAnimation(
+                            .easeInOut(duration: 1.5)
+                            .repeatForever(autoreverses: false)
+                        ) {
+                            pulse = true
+                        }
+                    }
+                    .onDisappear {
+                        pulse = false
+                    }
+            }
         }
         .frame(width: 24, height: 24)
-        .onAppear {
-            withAnimation(
-                .easeInOut(duration: 1.5)
-                .repeatForever(autoreverses: false)
-            ) {
-                pulse = true
-            }
+        .onDisappear {
+            pulse = false
         }
     }
 }

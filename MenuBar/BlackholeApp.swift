@@ -12,12 +12,16 @@ struct BlackholeApp: App {
                 .background(
                     VisualEffectView(material: .popover, blendingMode: .behindWindow)
                 )
-                .cornerRadius(16)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16)
                         .stroke(Color.white.opacity(0.15), lineWidth: 1)
                 )
                 .shadow(color: Color.black.opacity(0.15), radius: 15)
+                .introspectMenuBarExtraWindow { window in
+                    window.isOpaque = false
+                    window.backgroundColor = .clear
+                }
         }
         .menuBarExtraAccess(isPresented: $isMenuPresented)
         .menuBarExtraStyle(.window)
