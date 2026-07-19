@@ -76,7 +76,10 @@ int start_monitoring(const char* name) {
 			break;
 		}
 
-		CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.0, true);
+		SInt32 result = CFRunLoopRunInMode(kCFRunLoopDefaultMode, 2.0, true);
+		if (result == kCFRunLoopRunFinished || result == kCFRunLoopRunStopped) {
+			break;
+		}
 	}
 
 	pthread_mutex_lock(&g_monitorMutex);
