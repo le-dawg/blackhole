@@ -2,16 +2,19 @@
 set -e
 
 echo "Building Go DNS daemon binary..."
-go build -o ~/.local/bin/blackhole-dnsd src/main.go
+go build -o blackhole-dnsd src/main.go
+sudo cp blackhole-dnsd /usr/local/bin/blackhole-dnsd
 
-echo "Copying LaunchAgent configuration..."
-mkdir -p ~/Library/LaunchAgents
-cp com.solution8.blackhole.dnsd.plist ~/Library/LaunchAgents/
+echo "Copying LaunchDaemon configuration..."
+sudo cp com.solution8.blackhole.dnsd.plist /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
+sudo chown root:wheel /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
 
-echo "Loading LaunchAgent into launchd..."
-# Unload if previously running
+echo "Cleaning up old agents and unloading previous daemon..."
 launchctl bootout gui/$(id -u)/com.solution8.blackhole.dnsd 2>/dev/null || true
-# Load agent
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.solution8.blackhole.dnsd.plist
+rm -f ~/Library/LaunchAgents/com.solution8.blackhole.dnsd.plist
+sudo launchctl bootout system/com.solution8.blackhole.dnsd 2>/dev/null || true
+
+echo "Bootstrapping new LaunchDaemon..."
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
 
 echo "Deployment successful! Daemon is running in the background."

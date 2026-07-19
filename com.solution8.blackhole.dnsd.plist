@@ -6,13 +6,17 @@
     <string>com.solution8.blackhole.dnsd</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/thedawgctor/.local/bin/blackhole-dnsd</string>
+        <string>/usr/local/bin/blackhole-dnsd</string>
         <string>-port</string>
-        <string>5353</string>
+        <string>53</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
+    <key>StandardOutPath</key>
+    <string>/var/log/blackhole-dnsd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/var/log/blackhole-dnsd.log</string>
 </dict>
 </plist>

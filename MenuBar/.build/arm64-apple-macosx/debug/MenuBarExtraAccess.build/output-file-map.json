@@ -1,0 +1,65 @@
+{
+  "": {
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/master.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/MenuBarExtra Window Introspection.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtra Window Introspection.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtra Window Introspection.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtra Window Introspection~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtra Window Introspection.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/MenuBarExtraAccess.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraAccess.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraAccess.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraAccess~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraAccess.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/MenuBarExtraUtils/MenuBarExtraUtils.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraUtils.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraUtils.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraUtils~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraUtils.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/MenuBarExtraUtils/StatusItemIdentity.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/StatusItemIdentity.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/StatusItemIdentity.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/StatusItemIdentity~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/StatusItemIdentity.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/NSControl Extensions.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSControl Extensions.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSControl Extensions.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSControl Extensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSControl Extensions.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/NSEvent Extensions.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSEvent Extensions.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSEvent Extensions.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSEvent Extensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSEvent Extensions.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/NSStatusItem Extensions.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSStatusItem Extensions.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSStatusItem Extensions.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSStatusItem Extensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSStatusItem Extensions.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/NSWindow Extensions.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSWindow Extensions.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSWindow Extensions.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSWindow Extensions~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/NSWindow Extensions.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/Unused/Unused Code.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Unused Code.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Unused Code.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Unused Code~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Unused Code.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/checkouts/MenuBarExtraAccess/Sources/MenuBarExtraAccess/Utilities.swift": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Utilities.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Utilities.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Utilities~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/Utilities.swiftdeps"
+  }
+}
