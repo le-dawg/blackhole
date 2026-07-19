@@ -8,7 +8,7 @@ struct BlackholeApp: App {
     
     var body: some Scene {
         MenuBarExtra("Blackhole", systemImage: "circle.circle") {
-            PopoverView(isActive: $isDnsActive)
+            PopoverView(isActive: $isDnsActive, isMenuPresented: isMenuPresented)
                 .background(
                     VisualEffectView(material: .popover, blendingMode: .behindWindow)
                 )

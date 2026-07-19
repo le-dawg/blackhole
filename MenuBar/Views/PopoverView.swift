@@ -2,7 +2,9 @@ import SwiftUI
 
 struct PopoverView: View {
     @Binding var isActive: Bool
+    let isMenuPresented: Bool
     @State private var selectedTab = 0
+    @State private var isInitialLoad = false
     
     // Example exclusion apps list
     @State private var excludedApps = [
@@ -104,13 +106,17 @@ struct PopoverView: View {
             loadExclusions()
         }
         .onChange(of: excludedApps) {
-            saveExclusions()
+            if !isInitialLoad {
+                saveExclusions()
+            }
         }
     }
     
     private func getExclusionsFilePath() -> URL? {
-        let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
-        return homeDirectory.appendingPathComponent(".config/blackhole/exclusions.json")
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return appSupport.appendingPathComponent("blackhole/exclusions.json")
     }
     
     private func loadExclusions() {
@@ -119,26 +125,35 @@ struct PopoverView: View {
             saveExclusions()
             return
         }
-        do {
-            let data = try Data(contentsOf: fileURL)
-            let decoded = try JSONDecoder().decode([ExcludedApp].self, from: data)
-            self.excludedApps = decoded
-        } catch {
-            print("Error loading exclusions: \(error)")
+        Task(priority: .background) {
+            do {
+                let data = try Data(contentsOf: fileURL)
+                let decoded = try JSONDecoder().decode([ExcludedApp].self, from: data)
+                await MainActor.run {
+                    self.isInitialLoad = true
+                    self.excludedApps = decoded
+                    self.isInitialLoad = false
+                }
+            } catch {
+                print("Error loading exclusions: \(error)")
+            }
         }
     }
     
     private func saveExclusions() {
         guard let fileURL = getExclusionsFilePath() else { return }
-        let directoryURL = fileURL.deletingLastPathComponent()
-        do {
-            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = .prettyPrinted
-            let data = try encoder.encode(excludedApps)
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            print("Error saving exclusions: \(error)")
+        let currentApps = excludedApps
+        Task(priority: .background) {
+            let directoryURL = fileURL.deletingLastPathComponent()
+            do {
+                try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = .prettyPrinted
+                let data = try encoder.encode(currentApps)
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                print("Error saving exclusions: \(error)")
+            }
         }
     }
     
@@ -166,7 +181,7 @@ struct PopoverView: View {
             VStack(spacing: 12) {
                 HStack(spacing: 12) {
                     // Pulsing Indicator
-                    StatusIndicator(isActive: isActive)
+                    StatusIndicator(isActive: isActive, isMenuPresented: isMenuPresented)
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(isActive ? "Protection Active" : "Shield Offline")
@@ -313,7 +328,7 @@ struct PopoverView: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                     
-                    TextField("Bundle ID", text: $newBundleId)
+                    TextField("Bundle ID / Process / CLI Command", text: $newBundleId)
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 6)
@@ -390,6 +405,7 @@ struct TabButton: View {
 
 struct StatusIndicator: View {
     let isActive: Bool
+    let isMenuPresented: Bool
     @State private var pulse = false
     
     var body: some View {
@@ -398,7 +414,7 @@ struct StatusIndicator: View {
                 .fill(isActive ? Color.green : Color.gray)
                 .frame(width: 12, height: 12)
             
-            if isActive {
+            if isActive && isMenuPresented {
                 Circle()
                     .stroke(Color.green, lineWidth: 2)
                     .frame(width: 24, height: 24)
@@ -418,8 +434,10 @@ struct StatusIndicator: View {
             }
         }
         .frame(width: 24, height: 24)
-        .onDisappear {
-            pulse = false
+        .onChange(of: isMenuPresented) { _, newValue in
+            if !newValue {
+                pulse = false
+            }
         }
     }
 }
