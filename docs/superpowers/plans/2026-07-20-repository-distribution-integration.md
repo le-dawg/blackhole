@@ -30,10 +30,11 @@
 **Files:**
 - Create: `Makefile`
 - Modify: `.gitignore`
+- Modify: `com.solution8.blackhole.dnsd.plist`
 
 **Interfaces:**
 - Consumes: Go daemon source files, Swift MenuBar SPM project
-- Produces: Standard developer task automation commands
+- Produces: Standard developer task automation commands, plist template with {{EXCLUSIONS_PATH}} placeholder
 
 - [ ] **Step 1: Write the `.gitignore` additions**
 
@@ -86,7 +87,26 @@
   	rm -rf MenuBar/.build
   ```
 
-- [ ] **Step 3: Test local compilation and cleanup tasks**
+- [ ] **Step 3: Update LaunchDaemon plist to use exclusions placeholder**
+
+  Modify `com.solution8.blackhole.dnsd.plist` in the project root directory to replace the hardcoded home folder path with `{{EXCLUSIONS_PATH}}`.
+  Lines 10-15 should look exactly like:
+  ```xml
+          <string>-port</string>
+          <string>53</string>
+          <string>-exclusions</string>
+          <string>{{EXCLUSIONS_PATH}}</string>
+  ```
+
+- [ ] **Step 4: Verify plist syntax correctness**
+
+  Run:
+  ```bash
+  plutil -lint com.solution8.blackhole.dnsd.plist
+  ```
+  Expected output: `com.solution8.blackhole.dnsd.plist: OK`
+
+- [ ] **Step 5: Test local compilation and cleanup tasks**
 
   Run commands in terminal:
   ```bash
@@ -95,12 +115,12 @@
   ```
   Expected output: `make build` compiles Go and Swift successfully into `build/` directory; `make clean` deletes `build/` and `MenuBar/.build/` caches cleanly.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 6: Commit**
 
   Run:
   ```bash
-  git add Makefile .gitignore
-  git commit -m "feat(devex): add root Makefile and configure robust .gitignore isolation"
+  git add Makefile .gitignore com.solution8.blackhole.dnsd.plist
+  git commit -m "feat(devex): add root Makefile, configure gitignore, and template LaunchDaemon plist"
   ```
 
 ---
@@ -191,10 +211,11 @@
 **Files:**
 - Create: `install.sh`
 - Create: `README.md`
+- Create: `tests/install_test.sh`
 
 **Interfaces:**
 - Consumes: Released zip archive from GitHub
-- Produces: Installed daemon and SwiftUI app loaded system-wide
+- Produces: Installed daemon and SwiftUI app loaded system-wide, template placeholder tests
 
 - [ ] **Step 1: Create user-facing install.sh**
 
@@ -205,6 +226,9 @@
 
   REPO="thedawgctor/blackhole"
   TEMP_DIR=$(mktemp -d)
+
+  echo "Stopping existing daemon if running..."
+  sudo launchctl bootout system/com.solution8.blackhole.dnsd 2>/dev/null || true
 
   echo "Fetching latest release from GitHub..."
   # Resolves latest release zip download URL from GitHub releases api
@@ -221,15 +245,24 @@
   echo "Extracting files..."
   unzip -q "$TEMP_DIR/release.zip" -d "$TEMP_DIR"
 
+  # Dynamically determine the actual user's home directory
+  REAL_USER_HOME=$(eval echo "~${SUDO_USER:-$USER}")
+  EXCLUSIONS_FILE="$REAL_USER_HOME/Library/Application Support/blackhole/exclusions.json"
+
+  echo "Resolving exclusions template path to: $EXCLUSIONS_FILE"
+  sed -i '' "s|{{EXCLUSIONS_PATH}}|$EXCLUSIONS_FILE|g" "$TEMP_DIR/com.solution8.blackhole.dnsd.plist"
+
   echo "Deploying binaries and configs..."
   sudo mkdir -p /usr/local/bin
   sudo cp "$TEMP_DIR/blackhole-dnsd" /usr/local/bin/
   sudo cp -R "$TEMP_DIR/Blackhole.app" /Applications/
   sudo cp "$TEMP_DIR/com.solution8.blackhole.dnsd.plist" /Library/LaunchDaemons/
 
+  echo "Stripping macOS Gatekeeper quarantine flags..."
+  sudo xattr -rd com.apple.quarantine /Applications/Blackhole.app 2>/dev/null || true
+
   echo "Setting permissions and starting LaunchDaemon..."
   sudo chown root:wheel /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
-  sudo launchctl bootout system/com.solution8.blackhole.dnsd 2>/dev/null || true
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
 
   echo "Starting Menu Bar client application..."
@@ -276,15 +309,55 @@
   ```
   ```
 
-- [ ] **Step 3: Verify install script parsing**
+- [ ] **Step 3: Create shell testing script for script verification**
 
-  Run: `bash -n install.sh`
-  Expected: Exits successfully (0) indicating syntactically correct bash script.
+  Create a file `tests/install_test.sh` in the project directory to test template replacement and quarantine stripping:
+  ```bash
+  #!/bin/bash
+  set -e
 
-- [ ] **Step 4: Commit**
+  echo "Testing install.sh syntax..."
+  bash -n install.sh
+
+  echo "Testing template replacement logic..."
+  TEST_DIR=$(mktemp -d)
+  cp com.solution8.blackhole.dnsd.plist "$TEST_DIR/"
+  
+  # Inject dummy exclusions path
+  DUMMY_PATH="/Users/testuser/Library/Application Support/blackhole/exclusions.json"
+  sed -i '' "s|{{EXCLUSIONS_PATH}}|$DUMMY_PATH|g" "$TEST_DIR/com.solution8.blackhole.dnsd.plist"
+  
+  # Check if template was replaced correctly
+  if grep -q "{{EXCLUSIONS_PATH}}" "$TEST_DIR/com.solution8.blackhole.dnsd.plist"; then
+      echo "Fail: Plist still contains placeholder!"
+      exit 1
+  fi
+  
+  if ! grep -q "$DUMMY_PATH" "$TEST_DIR/com.solution8.blackhole.dnsd.plist"; then
+      echo "Fail: Plist does not contain substituted dummy path!"
+      exit 1
+  fi
+
+  # Check plist structure is still valid
+  plutil -lint "$TEST_DIR/com.solution8.blackhole.dnsd.plist"
+
+  rm -rf "$TEST_DIR"
+  echo "All script tests passed successfully!"
+  ```
+
+- [ ] **Step 4: Execute test suite to verify script automation passes**
+
+  Run commands:
+  ```bash
+  chmod +x tests/install_test.sh
+  ./tests/install_test.sh
+  ```
+  Expected output: "All script tests passed successfully!"
+
+- [ ] **Step 5: Commit**
 
   Run:
   ```bash
-  git add install.sh README.md
-  git commit -m "feat(deploy): implement curl install script and GitHub README documentation"
+  git add install.sh README.md tests/install_test.sh
+  git commit -m "feat(deploy): implement curl install script, tests, and documentation"
   ```
