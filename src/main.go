@@ -1,6 +1,7 @@
 package main
 
 import (
+    "errors"
     "flag"
     "log"
     "net"
@@ -103,7 +104,9 @@ func main() {
                 networksetup -setdnsservers "$service" Empty
             done
         `)
-        cmd.Run()
+        if err := cmd.Run(); err != nil {
+            log.Printf("Failed to reset DNS settings: %v", err)
+        }
 
         os.Exit(0)
     }()
@@ -113,6 +116,10 @@ func main() {
     for {
         n, cliAddr, err := conn.ReadFromUDP(buf)
         if err != nil {
+            if errors.Is(err, net.ErrClosed) {
+                break
+            }
+            log.Printf("Error reading UDP: %v", err)
             continue
         }
 
