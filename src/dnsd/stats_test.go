@@ -1,7 +1,7 @@
-// src/dnsd/stats_test.go
 package dnsd
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -20,5 +20,29 @@ func TestStats_IncrementAndSnapshot(t *testing.T) {
 	}
 	if snap.TopDomains["ads.com"] != 2 {
 		t.Errorf("expected ads.com to have 2 blocks, got %d", snap.TopDomains["ads.com"])
+	}
+}
+
+func TestStats_MaxCapacity(t *testing.T) {
+	s := NewGlobalStats()
+	for i := 0; i < 10005; i++ {
+		s.Increment(true, fmt.Sprintf("domain%d.com", i), fmt.Sprintf("app%d", i))
+	}
+
+	snap := s.Snapshot()
+	if snap.BlockedQueries != 10005 {
+		t.Fatalf("expected 10005 blocked, got %d", snap.BlockedQueries)
+	}
+
+	s.mu.Lock()
+	lDomain := len(s.topDomains)
+	lApp := len(s.topApps)
+	s.mu.Unlock()
+
+	if lDomain != 10000 {
+		t.Errorf("expected 10000 top domains, got %d", lDomain)
+	}
+	if lApp != 10000 {
+		t.Errorf("expected 10000 top apps, got %d", lApp)
 	}
 }

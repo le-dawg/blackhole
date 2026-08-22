@@ -1,7 +1,7 @@
-// src/dnsd/stats.go
 package dnsd
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,27 +40,40 @@ func (s *GlobalStats) Increment(blocked bool, domain, app string) {
 		atomic.AddUint64(&s.blocked, 1)
 		
 		s.mu.Lock()
-		s.topDomains[domain]++
-		s.topApps[app]++
+		
+		if _, exists := s.topDomains[domain]; exists || len(s.topDomains) < 10000 {
+			s.topDomains[domain]++
+		}
+		
+		if _, exists := s.topApps[app]; exists || len(s.topApps) < 10000 {
+			s.topApps[app]++
+		}
+		
 		s.mu.Unlock()
 	}
 }
 
-// Helper to get top 5 (naive approach for small maps)
+type kv struct {
+	k string
+	v uint64
+}
+
 func getTop5(m map[string]uint64) map[string]uint64 {
+	var sorted []kv
+	for k, v := range m {
+		sorted = append(sorted, kv{k, v})
+	}
+
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].v == sorted[j].v {
+			return sorted[i].k < sorted[j].k
+		}
+		return sorted[i].v > sorted[j].v
+	})
+
 	res := make(map[string]uint64)
-	for i := 0; i < 5; i++ {
-		var maxKey string
-		var maxVal uint64
-		for k, v := range m {
-			if v > maxVal && res[k] == 0 {
-				maxKey = k
-				maxVal = v
-			}
-		}
-		if maxKey != "" {
-			res[maxKey] = maxVal
-		}
+	for i := 0; i < 5 && i < len(sorted); i++ {
+		res[sorted[i].k] = sorted[i].v
 	}
 	return res
 }
@@ -74,10 +87,20 @@ func (s *GlobalStats) Snapshot() StatsSnapshot {
 	}
 	
 	s.mu.Lock()
-	td := getTop5(s.topDomains)
-	ta := getTop5(s.topApps)
+	tdCopy := make(map[string]uint64, len(s.topDomains))
+	for k, v := range s.topDomains {
+		tdCopy[k] = v
+	}
+	
+	taCopy := make(map[string]uint64, len(s.topApps))
+	for k, v := range s.topApps {
+		taCopy[k] = v
+	}
 	w := s.window
 	s.mu.Unlock()
+
+	td := getTop5(tdCopy)
+	ta := getTop5(taCopy)
 
 	return StatsSnapshot{
 		TotalQueries:   t,
