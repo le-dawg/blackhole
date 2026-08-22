@@ -1,7 +1,12 @@
 import Foundation
 import Combine
 
-final class IPCClient: ObservableObject, @unchecked Sendable {
+enum IPCError: Error {
+    case curlFailed
+}
+
+@MainActor
+final class IPCClient: ObservableObject {
     @Published var currentStats: StatsResponse?
     @Published var queries: [QueryRecord] = []
     
@@ -32,7 +37,7 @@ final class IPCClient: ObservableObject, @unchecked Sendable {
     func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
     
     private func fetchStats() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task.detached { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/stats", "-s"]
@@ -41,17 +46,17 @@ final class IPCClient: ObservableObject, @unchecked Sendable {
             try? task.run()
             task.waitUntilExit()
             
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let data = try? pipe.fileHandleForReading.readToEnd() else { return }
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601 // Assume ISO8601 or similar if needed. Actually the spec doesn't say, default is fine.
             if let stats = try? decoder.decode(StatsResponse.self, from: data) {
-                DispatchQueue.main.async { [weak self] in self?.currentStats = stats }
+                await MainActor.run { self?.currentStats = stats }
             }
         }
     }
     
     private func fetchQueries() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task.detached { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/queries", "-s"]
@@ -60,7 +65,7 @@ final class IPCClient: ObservableObject, @unchecked Sendable {
             try? task.run()
             task.waitUntilExit()
             
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let data = try? pipe.fileHandleForReading.readToEnd() else { return }
             guard let str = String(data: data, encoding: .utf8) else { return }
             
             let lines = str.split(separator: "\n")
@@ -74,16 +79,27 @@ final class IPCClient: ObservableObject, @unchecked Sendable {
                 }
             }
             
-            DispatchQueue.main.async { [weak self] in self?.queries = parsed.reversed() } // newest first
+            await MainActor.run { self?.queries = parsed.reversed() } // newest first
         }
     }
     
     func sendPause(durationSeconds: Int) async throws {
-        // Updated to match async throws in the protocol of the brief
-        let task = Process()
-        task.launchPath = "/usr/bin/curl"
-        task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "-X", "POST", "-d", "{\"durationSeconds\": \(durationSeconds)}", "http://localhost/pause", "-s"]
-        try task.run()
-        task.waitUntilExit()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let task = Process()
+            task.launchPath = "/usr/bin/curl"
+            task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "-X", "POST", "-d", "{\"durationSeconds\": \(durationSeconds)}", "http://localhost/pause", "-s", "-f"]
+            task.terminationHandler = { t in
+                if t.terminationStatus == 0 {
+                    continuation.resume(returning: ())
+                } else {
+                    continuation.resume(throwing: IPCError.curlFailed)
+                }
+            }
+            do {
+                try task.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
     }
 }
