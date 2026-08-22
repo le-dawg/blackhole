@@ -49,9 +49,14 @@ struct PopoverView: View {
                         selectedTab = 0
                     }
                 }
-                TabButton(title: "Exclusions", icon: "slider.horizontal.3", isSelected: selectedTab == 1) {
+                TabButton(title: "Inspector", icon: "magnifyingglass", isSelected: selectedTab == 1) {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         selectedTab = 1
+                    }
+                }
+                TabButton(title: "Exclusions", icon: "slider.horizontal.3", isSelected: selectedTab == 2) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        selectedTab = 2
                     }
                 }
             }
@@ -66,6 +71,8 @@ struct PopoverView: View {
                 VStack(spacing: 15) {
                     if selectedTab == 0 {
                         statusTabContent
+                    } else if selectedTab == 1 {
+                        InspectorView(ipc: ipc)
                     } else {
                         exclusionsTabContent
                     }
