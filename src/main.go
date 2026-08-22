@@ -44,8 +44,13 @@ func main() {
     r := dnsd.NewResolver(upstreams)
     
     // Load standard blocklist domains
-    r.AddBlockedDomain("ads.doubleclick.net")
-    r.AddBlockedDomain("adservice.google.com")
+    dnsd.StartGravitySync(filepath.Dir(exclusionsPath), r) // Using the directory of exclusionsPath
+    userLists, err := dnsd.StartUserListWatcher(filepath.Dir(exclusionsPath), r)
+    if err != nil {
+        log.Printf("Warning: failed to start user list watcher: %v", err)
+    } else {
+        defer userLists.Close()
+    }
 
     // Start SCDynamicStore VPN Monitor to dynamically chain resolver upstreams
     err = dnsd.StartVPNMonitor(func(servers []string) {
