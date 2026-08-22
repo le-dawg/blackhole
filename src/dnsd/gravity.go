@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -42,9 +41,18 @@ func refreshGravity(dir string, r *Resolver) error {
 		return loadCache(cachePath, r) // Fallback to stale cache
 	}
 
+	success := false
+	defer func() {
+		f.Close()
+		if !success {
+			os.Remove(tempCache)
+		}
+	}()
+
 	client := &http.Client{Timeout: 30 * time.Second}
 	writer := bufio.NewWriter(f)
 
+	successCount := 0
 	for _, url := range DefaultLists {
 		resp, err := client.Get(url)
 		if err != nil || resp.StatusCode != 200 {
@@ -56,9 +64,15 @@ func refreshGravity(dir string, r *Resolver) error {
 			writer.WriteString(domain + "\n")
 		})
 		resp.Body.Close()
+		successCount++
 	}
 
 	writer.Flush()
+	if successCount == 0 {
+		return loadCache(cachePath, r)
+	}
+
+	success = true
 	f.Close()
 	os.Rename(tempCache, cachePath)
 
@@ -71,53 +85,8 @@ func loadCache(cachePath string, r *Resolver) error {
 		return err
 	}
 	defer f.Close()
-
-	newRoot := &trieNode{}
 	
 	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			addDomainToRoot(newRoot, line)
-		}
-	}
-
-	r.mu.Lock()
-	r.root = newRoot
-	r.mu.Unlock()
+	r.UpdateFromScanner(scanner)
 	return scanner.Err()
-}
-
-func addDomainToRoot(root *trieNode, domain string) {
-	domain = normalizeDomain(domain)
-	if domain == "" {
-		return
-	}
-
-	parts := strings.Split(domain, ".")
-
-	node := root
-	inserted := false
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		if part == "" {
-			continue
-		}
-		inserted = true
-		if node.isEnd {
-			return
-		}
-		if node.children == nil {
-			node.children = make(map[string]*trieNode)
-		}
-		if _, exists := node.children[part]; !exists {
-			node.children[part] = &trieNode{}
-		}
-		node = node.children[part]
-	}
-	if !inserted {
-		return
-	}
-	node.isEnd = true
-	node.children = nil
 }

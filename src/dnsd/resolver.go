@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"bufio"
 	"strings"
 	"sync"
 )
@@ -112,6 +113,49 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	// Since this node is now blocked, all its children (more specific subdomains) are redundant.
 	// We can clear its children map to save memory.
 	node.children = nil
+}
+
+// UpdateFromScanner reads domains from a scanner and replaces the current blocklist trie.
+func (r *Resolver) UpdateFromScanner(scanner *bufio.Scanner) {
+	newRoot := &trieNode{}
+	
+	for scanner.Scan() {
+		domain := normalizeDomain(scanner.Text())
+		if domain == "" {
+			continue
+		}
+
+		parts := strings.Split(domain, ".")
+
+		node := newRoot
+		inserted := false
+		for i := len(parts) - 1; i >= 0; i-- {
+			part := parts[i]
+			if part == "" {
+				continue
+			}
+			inserted = true
+			if node.isEnd {
+				// Parent domain already blocked
+				break
+			}
+			if node.children == nil {
+				node.children = make(map[string]*trieNode)
+			}
+			if _, exists := node.children[part]; !exists {
+				node.children[part] = &trieNode{}
+			}
+			node = node.children[part]
+		}
+		if inserted {
+			node.isEnd = true
+			node.children = nil
+		}
+	}
+
+	r.mu.Lock()
+	r.root = newRoot
+	r.mu.Unlock()
 }
 
 // SetLists updates the whitelist and blacklist used by the resolver.
