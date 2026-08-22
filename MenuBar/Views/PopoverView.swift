@@ -10,6 +10,9 @@ struct PopoverView: View {
     @State private var newAppName = ""
     @State private var newBundleId = ""
     
+    @State private var installedApps: [(name: String, bundleId: String)] = []
+    @State private var selectedAppBundleId: String = ""
+    
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -145,6 +148,12 @@ struct PopoverView: View {
         }
         .onAppear {
             ipc.startPollingStats()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let apps = AppScanner.getInstalledApps()
+                DispatchQueue.main.async {
+                    self.installedApps = apps
+                }
+            }
         }
         .onDisappear {
             ipc.stopPollingStats()
@@ -347,10 +356,24 @@ struct PopoverView: View {
             
             // Add Custom Exclusion Section
             VStack(alignment: .leading, spacing: 8) {
-                Text("Add Custom Exclusion")
+                Text("Add Exclusion")
                     .font(.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
+                
+                Picker("Discovered Apps", selection: $selectedAppBundleId) {
+                    Text("Custom...").tag("")
+                    ForEach(installedApps, id: \.bundleId) { app in
+                        Text(app.name).tag(app.bundleId)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: selectedAppBundleId) { oldValue, newValue in
+                    if let app = installedApps.first(where: { $0.bundleId == newValue }) {
+                        newAppName = app.name
+                        newBundleId = app.bundleId
+                    }
+                }
                 
                 HStack(spacing: 8) {
                     TextField("App Name", text: $newAppName)
