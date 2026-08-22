@@ -6,12 +6,17 @@ import (
 	"strings"
 )
 
-func ParseBlocklist(r io.Reader) []string {
-	var domains []string
+func ParseBlocklist(r io.Reader, onDomain func(string)) error {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+
+		// Strip comments
+		if idx := strings.IndexAny(line, "#!"); idx != -1 {
+			line = strings.TrimSpace(line[:idx])
+		}
+
+		if line == "" {
 			continue
 		}
 
@@ -32,7 +37,10 @@ func ParseBlocklist(r io.Reader) []string {
 
 		line = strings.ToLower(line)
 		line = strings.TrimSuffix(line, ".")
-		domains = append(domains, line)
+		
+		if line != "" {
+			onDomain(line)
+		}
 	}
-	return domains
+	return scanner.Err()
 }
