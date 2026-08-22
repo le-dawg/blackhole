@@ -5,6 +5,7 @@ struct PopoverView: View {
     let isMenuPresented: Bool
     @State private var selectedTab = 0
     @Bindable var model: ExclusionModel
+    @StateObject private var ipc = IPCClient()
     
     @State private var newAppName = ""
     @State private var newBundleId = ""
@@ -109,6 +110,12 @@ struct PopoverView: View {
                 model.saveExclusionsDebounced()
             }
         }
+        .onAppear {
+            ipc.startPollingStats()
+        }
+        .onDisappear {
+            ipc.stopPollingStats()
+        }
     }
     
     private func addExclusion() {
@@ -159,22 +166,62 @@ struct PopoverView: View {
             }
             
             // Grid of metrics
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                MetricCard(
-                    title: "Blocked",
-                    value: isActive ? "1,248" : "0",
-                    subtitle: "Queries today",
-                    icon: "shield.fill",
-                    color: .red
-                )
+            if let stats = ipc.currentStats {
+                HStack(spacing: 12) {
+                    MetricCard(
+                        title: "TOTAL QUERIES",
+                        value: "\(stats.total)",
+                        subtitle: "24h window",
+                        icon: "network",
+                        color: .blue
+                    )
+                    
+                    MetricCard(
+                        title: "BLOCKED",
+                        value: "\(stats.blocked)",
+                        subtitle: String(format: "%.1f%% of traffic", stats.blockPercent),
+                        icon: "shield.fill",
+                        color: .green
+                    )
+                }
                 
-                MetricCard(
-                    title: "Memory",
-                    value: isActive ? "~12.4 MB" : "~2.1 MB",
-                    subtitle: "Daemon footprint",
-                    icon: "cpu",
-                    color: .green
-                )
+                // Top domains
+                if !stats.topDomains.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("TOP BLOCKED DOMAINS")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.secondary)
+                        
+                        let sortedDomains = stats.topDomains.keys.sorted {
+                            stats.topDomains[$0, default: 0] > stats.topDomains[$1, default: 0]
+                        }
+                        
+                        ForEach(Array(sortedDomains.prefix(5)), id: \.self) { domain in
+                            HStack {
+                                Text(domain)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(stats.topDomains[domain] ?? 0)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.white.opacity(0.04))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                }
+            } else {
+                Text("Loading stats...")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding()
             }
             
             // Info Card
