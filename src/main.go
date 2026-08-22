@@ -121,7 +121,7 @@ func main() {
         }
 
         // 1. Process matching and exclusions bypass check
-        procName, bundleID, err := dnsd.GetProcessInfoForPort(uint16(cliAddr.Port))
+        procName, bundleID, err := dnsd.GetProcessInfoForPort(uint16(cliAddr.Port), exclusionManager.GetCliPatterns())
         isExcluded := false
         if err == nil {
             isExcluded = exclusionManager.IsExcluded(procName, bundleID)

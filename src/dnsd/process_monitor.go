@@ -23,8 +23,8 @@ static uint16_t get_socket_local_port(struct socket_fdinfo *sockInfo) {
 	return 0;
 }
 
-// Helper to check if process arguments contain "litellm" using KERN_PROCARGS2
-static int check_pid_litellm(pid_t pid) {
+// Helper to check if process arguments contain any of the patterns using KERN_PROCARGS2
+static int check_pid_patterns(pid_t pid, char** patterns, int pattern_count) {
 	int mib[3];
 	static int argmax = 0;
 	size_t size;
@@ -34,13 +34,13 @@ static int check_pid_litellm(pid_t pid) {
 		int mib_argmax[2] = {CTL_KERN, KERN_ARGMAX};
 		size_t size_argmax = sizeof(argmax);
 		if (sysctl(mib_argmax, 2, &argmax, &size_argmax, NULL, 0) == -1) {
-			return 0;
+			return -1;
 		}
 	}
 
 	procargs = (char *)malloc(argmax);
 	if (!procargs) {
-		return 0;
+		return -1;
 	}
 
 	mib[0] = CTL_KERN;
@@ -49,7 +49,7 @@ static int check_pid_litellm(pid_t pid) {
 	size = argmax;
 	if (sysctl(mib, 3, procargs, &size, NULL, 0) == -1) {
 		free(procargs);
-		return 0;
+		return -1;
 	}
 
 	if (size > 0) {
@@ -59,7 +59,7 @@ static int check_pid_litellm(pid_t pid) {
 	int argc;
 	if (size < sizeof(argc)) {
 		free(procargs);
-		return 0;
+		return -1;
 	}
 	memcpy(&argc, procargs, sizeof(argc));
 
@@ -75,13 +75,18 @@ static int check_pid_litellm(pid_t pid) {
 		cp++;
 	}
 
-	int found = 0;
+	int found_idx = -1;
 	for (int i = 0; i < argc; i++) {
 		if (cp >= end) {
 			break;
 		}
-		if (strstr(cp, "litellm") != NULL) {
-			found = 1;
+		for (int p = 0; p < pattern_count; p++) {
+			if (patterns[p] != NULL && strstr(cp, patterns[p]) != NULL) {
+				found_idx = p;
+				break;
+			}
+		}
+		if (found_idx != -1) {
 			break;
 		}
 		// Skip current argument
@@ -95,7 +100,7 @@ static int check_pid_litellm(pid_t pid) {
 	}
 
 	free(procargs);
-	return found;
+	return found_idx;
 }
 
 // CoreFoundation/Security-based helper to retrieve the bundle ID of a process by its PID.
@@ -236,16 +241,34 @@ func init() {
 	}()
 }
 
-func isLiteLLM(pid C.pid_t) bool {
-	return C.check_pid_litellm(pid) != 0
+func matchPattern(pid int, patterns []string) string {
+	if len(patterns) == 0 {
+		return ""
+	}
+	cPatterns := make([]*C.char, len(patterns))
+	for i, p := range patterns {
+		cPatterns[i] = C.CString(p)
+		defer C.free(unsafe.Pointer(cPatterns[i]))
+	}
+
+	var cPatternsPtr **C.char
+	if len(cPatterns) > 0 {
+		cPatternsPtr = &cPatterns[0]
+	}
+
+	matchIdx := int(C.check_pid_patterns(C.pid_t(pid), cPatternsPtr, C.int(len(patterns))))
+	if matchIdx >= 0 && matchIdx < len(patterns) {
+		return patterns[matchIdx]
+	}
+	return ""
 }
 
-// CheckPIDLiteLLM is a wrapper around the C helper check_pid_litellm for testing purposes.
-func CheckPIDLiteLLM(pid int) bool {
-	return C.check_pid_litellm(C.pid_t(pid)) != 0
+// CheckPIDPatterns is a wrapper around the C helper check_pid_patterns for testing purposes.
+func CheckPIDPatterns(pid int, patterns []string) string {
+	return matchPattern(pid, patterns)
 }
 
-func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
+func resolveMetadataForPID(pid int, patterns []string) (ProcessMetadata, error) {
 	pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
 	ret := int(C.proc_pidpath(C.int(pid), unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
 	if ret <= 0 {
@@ -263,9 +286,10 @@ func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
 		bundleID = extractBundleID(procName)
 	}
 
-	if isLiteLLM(C.pid_t(pid)) {
-		if !strings.Contains(strings.ToLower(procName), "litellm") {
-			procName = procName + "-litellm"
+	matched := matchPattern(pid, patterns)
+	if matched != "" {
+		if !strings.Contains(strings.ToLower(procName), strings.ToLower(matched)) {
+			procName = procName + "-" + matched
 		}
 	}
 
@@ -275,7 +299,7 @@ func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
 	}, nil
 }
 
-func getMetadataForPID(pid int) (string, string, error) {
+func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 	pidMetadataCacheMu.RLock()
 	entry, found := pidMetadataCache[pid]
 	pidMetadataCacheMu.RUnlock()
@@ -302,7 +326,7 @@ func getMetadataForPID(pid int) (string, string, error) {
 		return entry.metadata.Name, entry.metadata.BundleID, nil
 	}
 
-	meta, err := resolveMetadataForPID(pid)
+	meta, err := resolveMetadataForPID(pid, patterns)
 
 	pidMetadataCacheMu.Lock()
 	pidMetadataCache[pid] = pidMetadataEntry{
@@ -320,7 +344,7 @@ func getMetadataForPID(pid int) (string, string, error) {
 
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port
 // to its originating Process Name, Bundle ID (if applicable), and PID.
-func GetProcessInfoForPort(port uint16) (string, string, error) {
+func GetProcessInfoForPort(port uint16, patterns []string) (string, string, error) {
 	portToPIDCacheMu.RLock()
 	entry, found := portToPIDCache[port]
 	portToPIDCacheMu.RUnlock()
@@ -334,7 +358,7 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 			if entry.err != nil {
 				return "", "", entry.err
 			}
-			return getMetadataForPID(entry.pid)
+			return getMetadataForPID(entry.pid, patterns)
 		}
 	}
 
@@ -355,7 +379,7 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 			if entry.err != nil {
 				return "", "", entry.err
 			}
-			return getMetadataForPID(entry.pid)
+			return getMetadataForPID(entry.pid, patterns)
 		}
 	}
 
@@ -370,7 +394,7 @@ func GetProcessInfoForPort(port uint16) (string, string, error) {
 		return "", "", err
 	}
 
-	return getMetadataForPID(pid)
+	return getMetadataForPID(pid, patterns)
 }
 
 func getProcessInfoForPortNoCache(port uint16) (int, error) {

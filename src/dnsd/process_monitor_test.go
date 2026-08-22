@@ -11,7 +11,7 @@ import (
 
 func TestProcessCorrelationInactive(t *testing.T) {
 	// Ephemeral ports without active sockets should fail cleanly or return empty
-	name, bundleID, err := GetProcessInfoForPort(9999)
+	name, bundleID, err := GetProcessInfoForPort(9999, []string{"litellm"})
 	if err == nil && (name != "" || bundleID != "") {
 		t.Errorf("Expected lookup on inactive port to fail or return empty. Got name=%s, bundleID=%s", name, bundleID)
 	}
@@ -36,7 +36,7 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 	}
 
 	// Lookup process info for our listening port
-	procName, bundleID, err := GetProcessInfoForPort(port)
+	procName, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
 	}
@@ -75,7 +75,7 @@ func TestProcessCorrelationActiveUDP(t *testing.T) {
 	}
 
 	// Lookup process info for our listening port
-	procName, bundleID, err := GetProcessInfoForPort(port)
+	procName, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
 	}
@@ -169,7 +169,7 @@ func TestProcessCacheTTL(t *testing.T) {
 	pidMetadataCacheMu.Unlock()
 
 	// Read and verify cache hit
-	name, bundleID, err := GetProcessInfoForPort(port)
+	name, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Expected no error from cached port lookup, got %v", err)
 	}
@@ -191,7 +191,7 @@ func TestProcessCacheTTL(t *testing.T) {
 	pidMetadataCacheMu.Unlock()
 
 	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error)
-	_, _, err = GetProcessInfoForPort(port)
+	_, _, err = GetProcessInfoForPort(port, []string{"litellm"})
 	if err == nil {
 		t.Errorf("Expected query to fail after cache expiration")
 	}
@@ -263,8 +263,8 @@ func TestLiteLLMArgumentDetection(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Call the C helper wrapper to verify argument detection
-	found := CheckPIDLiteLLM(cmd.Process.Pid)
-	if !found {
+	found := CheckPIDPatterns(cmd.Process.Pid, []string{"litellm"})
+	if found == "" {
 		t.Errorf("Expected C helper to detect 'litellm' in arguments of PID %d", cmd.Process.Pid)
 	}
 }
@@ -292,7 +292,7 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 	portToPIDCacheMu.Unlock()
 
 	// Query port 1. This should run a system scan and populate both port 1 and port 2.
-	_, _, err = GetProcessInfoForPort(port1)
+	_, _, err = GetProcessInfoForPort(port1, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for port1: %v", err)
 	}
