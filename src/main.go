@@ -100,7 +100,7 @@ func main() {
     }()
 
     // Proxy server message loop
-    buf := make([]byte, 512)
+    buf := make([]byte, 4096)
     for {
         n, cliAddr, err := conn.ReadFromUDP(buf)
         if err != nil {
@@ -149,8 +149,9 @@ func forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsme
     if len(msg.Questions) > 0 {
         q := msg.Questions[0]
         if cachedMsg, ok := dnsCache.Get(domain, uint16(q.Type)); ok {
-            cachedMsg.Header.ID = msg.Header.ID
-            resp, err := cachedMsg.Pack()
+            cp := *cachedMsg
+            cp.Header.ID = msg.Header.ID
+            resp, err := cp.Pack()
             if err == nil {
                 _, _ = conn.WriteToUDP(resp, cliAddr)
                 return
