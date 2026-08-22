@@ -37,7 +37,7 @@ final class IPCClient: ObservableObject {
     func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
     
     private func fetchStats() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/stats", "-s"]
@@ -56,7 +56,7 @@ final class IPCClient: ObservableObject {
     }
     
     private func fetchQueries() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .utility).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/queries", "-s"]
