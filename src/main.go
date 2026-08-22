@@ -111,6 +111,16 @@ func main() {
         os.Exit(0)
     }()
 
+    // Initialize global stats and ring buffer for IPC
+    rb := dnsd.NewRingBuffer(1000)
+    stats := dnsd.NewGlobalStats()
+    
+    // Start IPC Server
+    _, err = dnsd.StartIPCServer("/tmp/blackhole.sock", rb, stats)
+    if err != nil {
+        log.Printf("Warning: Failed to start IPC server: %v", err)
+    }
+
     // Proxy server message loop
     buf := make([]byte, 4096)
     for {
@@ -138,6 +148,8 @@ func main() {
             domain = domain[:len(domain)-1]
         }
 
+        startTime := time.Now()
+
         // 1. Process matching and exclusions bypass check
         procName, bundleID, err := dnsd.GetProcessInfoForPort(uint16(cliAddr.Port), exclusionManager.GetCliPatterns())
         isExcluded := false
@@ -145,19 +157,35 @@ func main() {
             isExcluded = exclusionManager.IsExcluded(procName, bundleID)
         }
 
-        if isExcluded {
+        var status string
+
+        if dnsd.IsPaused() {
+            status = "Allowed"
+            forwardQuery(buf[:n], cliAddr, conn, msg, domain)
+        } else if isExcluded {
+            status = "Excluded"
             log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
             forwardQuery(buf[:n], cliAddr, conn, msg, domain)
-            continue
-        }
-
-        // 2. Trie Resolver ad-block list evaluation
-        if r.Resolve(domain) {
+        } else if r.Resolve(domain) {
+            status = "Blocked"
             log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
             sendBlockedResponse(msg, cliAddr, conn)
         } else {
+            status = "Allowed"
             forwardQuery(buf[:n], cliAddr, conn, msg, domain)
         }
+
+        latencyMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+        stats.Increment(status == "Blocked", domain, procName)
+        rb.Push(dnsd.QueryRecord{
+            Timestamp:   time.Now(),
+            Domain:      domain,
+            QueryType:   uint16(question.Type),
+            Status:      status,
+            ProcessName: procName,
+            BundleID:    bundleID,
+            LatencyMs:   latencyMs,
+        })
     }
 }
 
