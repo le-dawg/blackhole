@@ -45,7 +45,7 @@ func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.
 	})
 	
 	mux.HandleFunc("/queries", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
 		for _, q := range rb.Snapshot() {
 			if err := enc.Encode(q); err != nil {
