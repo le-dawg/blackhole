@@ -13,6 +13,7 @@ echo "Cleaning up old agents and unloading previous daemon..."
 launchctl bootout gui/$(id -u)/com.solution8.blackhole.dnsd 2>/dev/null || true
 launchctl bootout gui/$(id -u)/com.blackhole.dnsd 2>/dev/null || true
 rm -f ~/Library/LaunchAgents/com.solution8.blackhole.dnsd.plist
+rm -f /Library/LaunchDaemons/com.solution8.blackhole.dnsd.plist
 rm -f ~/Library/LaunchAgents/com.blackhole.dnsd.plist
 sudo launchctl bootout system/com.solution8.blackhole.dnsd 2>/dev/null || true
 sudo launchctl bootout system/com.blackhole.dnsd 2>/dev/null || true
