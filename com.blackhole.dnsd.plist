@@ -3,14 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.solution8.blackhole.dnsd</string>
+    <string>com.blackhole.dnsd</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/blackhole-dnsd</string>
         <string>-port</string>
         <string>53</string>
         <string>-exclusions</string>
-        <string>/Users/thedawgctor/Library/Application Support/blackhole/exclusions.json</string>
+        <string>/Library/Application Support/blackhole/exclusions.json</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

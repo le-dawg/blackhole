@@ -113,7 +113,7 @@ func TestExtractBundleID(t *testing.T) {
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.solution8.testapp</string>
+	<string>com.blackhole.testapp</string>
 </dict>
 </plist>`
 
@@ -126,7 +126,7 @@ func TestExtractBundleID(t *testing.T) {
 	execPath := filepath.Join(contentsDir, "MacOS", "testapp")
 
 	bundleID := extractBundleID(execPath)
-	expectedBundleID := "com.solution8.testapp"
+	expectedBundleID := "com.blackhole.testapp"
 	if bundleID != expectedBundleID {
 		t.Errorf("Expected bundle ID %q, got %q", expectedBundleID, bundleID)
 	}
@@ -215,7 +215,7 @@ func TestBinaryPlistDecoding(t *testing.T) {
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.solution8.binarytest</string>
+	<string>com.blackhole.binarytest</string>
 </dict>
 </plist>`
 
@@ -235,7 +235,7 @@ func TestBinaryPlistDecoding(t *testing.T) {
 
 	// Call extractBundleID which should convert it back to XML and decode it
 	bundleID := extractBundleID(execPath)
-	expectedBundleID := "com.solution8.binarytest"
+	expectedBundleID := "com.blackhole.binarytest"
 	if bundleID != expectedBundleID {
 		t.Errorf("Expected bundle ID %q, got %q", expectedBundleID, bundleID)
 	}
@@ -329,7 +329,7 @@ func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.solution8.nestedapp</string>
+	<string>com.blackhole.nestedapp</string>
 </dict>
 </plist>`
 
@@ -340,7 +340,7 @@ func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
 
 	execPath := filepath.Join(contentsDir, "MacOS", "nestedexec")
 	bundleID := extractBundleID(execPath)
-	expectedBundleID := "com.solution8.nestedapp"
+	expectedBundleID := "com.blackhole.nestedapp"
 	if bundleID != expectedBundleID {
 		t.Errorf("Expected nested bundle ID %q, got %q", expectedBundleID, bundleID)
 	}
