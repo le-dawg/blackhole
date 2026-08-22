@@ -23,62 +23,37 @@ func runProcess(executablePath: String, arguments: [String]) -> String {
     return ""
 }
 
-func getActiveNetworkInterface() -> String {
-    // 1. Get default routing interface
-    let routeOutput = runProcess(executablePath: "/sbin/route", arguments: ["-n", "get", "default"])
-    let lines = routeOutput.components(separatedBy: .newlines)
-    var activeDevice = ""
+func getActiveNetworkServices() -> [String] {
+    let output = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-listallnetworkservices"])
+    var services: [String] = []
+    let lines = output.components(separatedBy: .newlines)
     for line in lines {
-        if line.trimmingCharacters(in: .whitespaces).hasPrefix("interface:") {
-            let parts = line.components(separatedBy: ":")
-            if parts.count > 1 {
-                activeDevice = parts[1].trimmingCharacters(in: .whitespaces)
-                break
-            }
-        }
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { continue }
+        if trimmed.hasPrefix("An asterisk") { continue }
+        if trimmed.hasPrefix("*") { continue }
+        services.append(trimmed)
     }
-    
-    if activeDevice.isEmpty { return "Wi-Fi" }
-    
-    // 2. Map interface device (e.g., en0) to hardware port name (e.g., Wi-Fi)
-    let hwOutput = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-listallhardwareports"])
-    let hwLines = hwOutput.components(separatedBy: .newlines)
-    var currentHardwarePort = ""
-    
-    for line in hwLines {
-        if line.hasPrefix("Hardware Port:") {
-            let parts = line.components(separatedBy: ":")
-            if parts.count > 1 {
-                currentHardwarePort = parts[1].trimmingCharacters(in: .whitespaces)
-            }
-        } else if line.hasPrefix("Device:") {
-            let parts = line.components(separatedBy: ":")
-            if parts.count > 1 {
-                let device = parts[1].trimmingCharacters(in: .whitespaces)
-                if device == activeDevice {
-                    return currentHardwarePort
-                }
-            }
-        }
-    }
-    
-    return "Wi-Fi"
+    return services
 }
 
 func setLocalDNS() {
-    let interface = getActiveNetworkInterface()
-    _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "127.0.0.1"])
-    logDNSStatus()
+    let services = getActiveNetworkServices()
+    for interface in services {
+        _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "127.0.0.1"])
+        logDNSStatus(for: interface)
+    }
 }
 
 func clearLocalDNS() {
-    let interface = getActiveNetworkInterface()
-    _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "empty"])
-    logDNSStatus()
+    let services = getActiveNetworkServices()
+    for interface in services {
+        _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "empty"])
+        logDNSStatus(for: interface)
+    }
 }
 
-func logDNSStatus() {
-    let interface = getActiveNetworkInterface()
+func logDNSStatus(for interface: String) {
     let status = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-getdnsservers", interface])
     print("Current DNS servers on \(interface): \(status)")
 }
