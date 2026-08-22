@@ -21,7 +21,7 @@ launchctl bootout system/com.blackhole.dnsd 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.blackhole.dnsd.plist 2>/dev/null || true
 
 echo "Building Go DNS daemon binary..."
-go build -o blackhole-dnsd src/main.go 2>/dev/null || true
+go build -o blackhole-dnsd src/main.go
 
 echo "Removing Gatekeeper quarantine..."
 xattr -rd com.apple.quarantine blackhole-dnsd 2>/dev/null || true
@@ -30,7 +30,7 @@ xattr -rd com.apple.quarantine Blackhole.app 2>/dev/null || true
 echo "Installing binaries..."
 cp blackhole-dnsd /usr/local/bin/
 rm -rf /Applications/Blackhole.app
-cp -R Blackhole.app /Applications/ 2>/dev/null || true
+cp -R Blackhole.app /Applications/
 
 echo "Configuring LaunchDaemon..."
 # Replace {{HOME_DIR}} with actual home dir in the plist
