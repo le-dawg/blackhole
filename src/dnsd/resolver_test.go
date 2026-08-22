@@ -191,3 +191,14 @@ func BenchmarkResolve(b *testing.B) {
 		r.Resolve("google.com")
 	}
 }
+
+func TestCanaryDomains(t *testing.T) {
+	r := NewResolver(nil)
+	if !r.Resolve("use-application-dns.net.") {
+		t.Error("Firefox canary should be blocked")
+	}
+	if !r.Resolve("dns.google.") {
+		t.Error("Chrome canary should be blocked")
+	}
+}
+

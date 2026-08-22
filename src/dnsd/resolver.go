@@ -175,6 +175,11 @@ func (r *Resolver) Resolve(domain string) bool {
 		return false
 	}
 
+	switch domain {
+	case "use-application-dns.net", "dns.google", "cloudflare-dns.com", "doh.opendns.com":
+		return true
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

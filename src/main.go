@@ -174,15 +174,54 @@ func forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn) {
 func sendBlockedResponse(msg dnsmessage.Message, cliAddr *net.UDPAddr, conn *net.UDPConn) {
     msg.Header.Response = true
     msg.Header.RCode = dnsmessage.RCodeSuccess
-    msg.Answers = append(msg.Answers, dnsmessage.Resource{
-        Header: dnsmessage.ResourceHeader{
-            Name:  msg.Questions[0].Name,
-            Type:  dnsmessage.TypeA,
-            Class: dnsmessage.ClassINET,
-            TTL:   3600,
-        },
-        Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
-    })
+    msg.Answers = nil
+
+    for _, q := range msg.Questions {
+        switch q.Type {
+        case dnsmessage.TypeA:
+            msg.Answers = append(msg.Answers, dnsmessage.Resource{
+                Header: dnsmessage.ResourceHeader{
+                    Name:  q.Name,
+                    Type:  dnsmessage.TypeA,
+                    Class: dnsmessage.ClassINET,
+                    TTL:   3600,
+                },
+                Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+            })
+        case dnsmessage.TypeAAAA:
+            msg.Answers = append(msg.Answers, dnsmessage.Resource{
+                Header: dnsmessage.ResourceHeader{
+                    Name:  q.Name,
+                    Type:  dnsmessage.TypeAAAA,
+                    Class: dnsmessage.ClassINET,
+                    TTL:   3600,
+                },
+                Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+            })
+        case dnsmessage.Type(65), dnsmessage.Type(64):
+            // HTTPS, SVCB - empty NOERROR response
+        case dnsmessage.TypeALL:
+            msg.Answers = append(msg.Answers, dnsmessage.Resource{
+                Header: dnsmessage.ResourceHeader{
+                    Name:  q.Name,
+                    Type:  dnsmessage.TypeA,
+                    Class: dnsmessage.ClassINET,
+                    TTL:   3600,
+                },
+                Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+            })
+            msg.Answers = append(msg.Answers, dnsmessage.Resource{
+                Header: dnsmessage.ResourceHeader{
+                    Name:  q.Name,
+                    Type:  dnsmessage.TypeAAAA,
+                    Class: dnsmessage.ClassINET,
+                    TTL:   3600,
+                },
+                Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+            })
+        }
+    }
+
     resp, err := msg.Pack()
     if err == nil {
         _, _ = conn.WriteToUDP(resp, cliAddr)
