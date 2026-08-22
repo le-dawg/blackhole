@@ -60,7 +60,12 @@ func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration) ([]by
 	case resp := <-resultCh:
 		return resp, nil
 	case <-allFailed:
-		return nil, errors.New("all upstreams failed")
+		select {
+		case resp := <-resultCh:
+			return resp, nil
+		default:
+			return nil, errors.New("all upstreams failed")
+		}
 	case <-ctx.Done():
 		return nil, errors.New("upstream timeout")
 	}
