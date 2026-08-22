@@ -16,6 +16,8 @@ import (
 )
 
 var (
+    dnsCache *dnsd.DNSCache = dnsd.NewDNSCache(4000)
+
     upstreamsMu sync.RWMutex
     upstreams   = []string{"1.1.1.1:53", "8.8.8.8:53"}
 )
@@ -129,7 +131,7 @@ func main() {
 
         if isExcluded {
             log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
-            forwardQuery(buf[:n], cliAddr, conn)
+            forwardQuery(buf[:n], cliAddr, conn, msg, domain)
             continue
         }
 
@@ -138,36 +140,35 @@ func main() {
             log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
             sendBlockedResponse(msg, cliAddr, conn)
         } else {
-            forwardQuery(buf[:n], cliAddr, conn)
+            forwardQuery(buf[:n], cliAddr, conn, msg, domain)
         }
     }
 }
 
-func forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn) {
+func forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string) {
+    if len(msg.Questions) > 0 {
+        q := msg.Questions[0]
+        if cachedMsg, ok := dnsCache.Get(domain, uint16(q.Type)); ok {
+            cachedMsg.Header.ID = msg.Header.ID
+            resp, err := cachedMsg.Pack()
+            if err == nil {
+                _, _ = conn.WriteToUDP(resp, cliAddr)
+                return
+            }
+        }
+    }
+
     upstreamsMu.RLock()
     currentUpstreams := upstreams
     upstreamsMu.RUnlock()
 
-    for _, target := range currentUpstreams {
-        upConn, err := net.Dial("udp", target)
-        if err != nil {
-            continue
+    respRaw, err := dnsd.RaceForward(raw, currentUpstreams, 500*time.Millisecond)
+    if err == nil {
+        var respMsg dnsmessage.Message
+        if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
+            dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), &respMsg)
         }
-        
-        _, err = upConn.Write(raw)
-        if err != nil {
-            upConn.Close()
-            continue
-        }
-
-        respBuf := make([]byte, 512)
-        _ = upConn.SetReadDeadline(time.Now().Add(1 * time.Second))
-        rn, err := upConn.Read(respBuf)
-        upConn.Close()
-        if err == nil {
-            _, _ = conn.WriteToUDP(respBuf[:rn], cliAddr)
-            return
-        }
+        _, _ = conn.WriteToUDP(respRaw, cliAddr)
     }
 }
 
