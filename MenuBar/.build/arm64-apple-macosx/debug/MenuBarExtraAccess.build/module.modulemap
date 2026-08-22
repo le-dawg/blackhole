@@ -1,4 +1,0 @@
-module MenuBarExtraAccess {
-    header "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/debug/MenuBarExtraAccess.build/MenuBarExtraAccess-Swift.h"
-    requires objc
-}

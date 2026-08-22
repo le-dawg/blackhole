@@ -38,18 +38,22 @@ func getActiveNetworkServices() -> [String] {
 }
 
 func setLocalDNS() {
-    let services = getActiveNetworkServices()
-    for interface in services {
-        _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "127.0.0.1"])
-        logDNSStatus(for: interface)
+    DispatchQueue.global(qos: .background).async {
+        let services = getActiveNetworkServices()
+        for interface in services {
+            _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "127.0.0.1"])
+            logDNSStatus(for: interface)
+        }
     }
 }
 
 func clearLocalDNS() {
-    let services = getActiveNetworkServices()
-    for interface in services {
-        _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "empty"])
-        logDNSStatus(for: interface)
+    DispatchQueue.global(qos: .background).async {
+        let services = getActiveNetworkServices()
+        for interface in services {
+            _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "Empty"])
+            logDNSStatus(for: interface)
+        }
     }
 }
 
