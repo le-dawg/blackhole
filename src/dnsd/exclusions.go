@@ -43,6 +43,10 @@ func StartExclusionWatcher(path string) (*ExclusionManager, error) {
 
 	// Watch the directory, not the file itself, to handle atomic saves (Rename/Remove)
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		watcher.Close()
+		return nil, err
+	}
 	if err := watcher.Add(dir); err != nil {
 		watcher.Close()
 		return nil, err
@@ -105,13 +109,13 @@ func (em *ExclusionManager) IsExcluded(procName, bundleID string) bool {
 		if !app.IsExcluded {
 			continue
 		}
-		if app.BundleID != "" && app.BundleID == bundleID {
+		if app.BundleID != "" && strings.EqualFold(app.BundleID, bundleID) {
 			return true
 		}
-		if app.CliPattern != "" && strings.Contains(procName, app.CliPattern) {
+		if app.CliPattern != "" && strings.Contains(strings.ToLower(procName), strings.ToLower(app.CliPattern)) {
 			return true
 		}
-		if app.Name != "" && app.Name == procName {
+		if app.Name != "" && strings.EqualFold(app.Name, procName) {
 			return true
 		}
 	}
