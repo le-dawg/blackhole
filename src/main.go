@@ -5,6 +5,7 @@ import (
     "log"
     "net"
     "os"
+    "os/exec"
     "os/signal"
     "path/filepath"
     "sync"
@@ -90,12 +91,20 @@ func main() {
 
     // Listen for graceful termination signals
     sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
     go func() {
-        <-sigChan
-        log.Println("Shutting down daemon...")
+        sig := <-sigChan
+        log.Printf("Received signal %v. Cleaning up...", sig)
         dnsd.StopVPNMonitor()
         conn.Close()
+
+        cmd := exec.Command("sh", "-c", `
+            networksetup -listallnetworkservices | grep -v '*' | while read service; do
+                networksetup -setdnsservers "$service" Empty
+            done
+        `)
+        cmd.Run()
+
         os.Exit(0)
     }()
 
