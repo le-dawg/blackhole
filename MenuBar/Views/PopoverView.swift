@@ -31,12 +31,38 @@ struct PopoverView: View {
                 
                 Spacer()
                 
-                // Premium Toggle Button
-                Toggle("", isOn: $isActive)
-                    .toggleStyle(.switch)
-                    .tint(.blue)
-                    .scaleEffect(0.9)
-                    .accessibilityLabel("Enable DNS Protection")
+                if isActive {
+                    Menu {
+                        Button("Disable for 5 minutes") {
+                            Task { try? await ipc.sendPause(durationSeconds: 300) }
+                            clearLocalDNS()
+                            isActive = false
+                        }
+                        Button("Disable for 15 minutes") {
+                            Task { try? await ipc.sendPause(durationSeconds: 900) }
+                            clearLocalDNS()
+                            isActive = false
+                        }
+                        Button("Disable indefinitely") {
+                            Task { try? await ipc.sendPause(durationSeconds: 86400) }
+                            clearLocalDNS()
+                            isActive = false
+                        }
+                    } label: {
+                        Text("Pause Protection")
+                            .font(.caption)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                } else {
+                    Button("Enable Protection") {
+                        Task { try? await ipc.sendPause(durationSeconds: 0) }
+                        setLocalDNS()
+                        isActive = true
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
