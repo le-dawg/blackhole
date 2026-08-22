@@ -17,6 +17,8 @@ type Resolver struct {
 	mu        sync.RWMutex
 	root      *trieNode
 	upstreams []string
+	whitelist map[string]bool
+	blacklist map[string]bool
 }
 
 // NewResolver initializes and returns a new *Resolver with the provided upstream DNS servers.
@@ -112,6 +114,14 @@ func (r *Resolver) AddBlockedDomain(domain string) {
 	node.children = nil
 }
 
+// SetLists updates the whitelist and blacklist used by the resolver.
+func (r *Resolver) SetLists(whitelist, blacklist map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.whitelist = whitelist
+	r.blacklist = blacklist
+}
+
 // Resolve normalizes a domain and queries the trie to check if it is blocked.
 // It returns true if the domain or any of its parent domains are blocked, and false otherwise.
 // It is safe for concurrent use.
@@ -123,6 +133,13 @@ func (r *Resolver) Resolve(domain string) bool {
 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
+	if r.whitelist != nil && r.whitelist[domain] {
+		return false
+	}
+	if r.blacklist != nil && r.blacklist[domain] {
+		return true
+	}
 
 	if r.root == nil {
 		return false
