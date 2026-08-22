@@ -3,29 +3,33 @@ package dnsd
 import "testing"
 
 func TestIsProcessExcluded(t *testing.T) {
-    exclusions := []ExcludedApp{
-        {Name: "Safari", BundleID: "com.apple.Safari", IsExcluded: true},
-        {Name: "LiteLLM", BundleID: "litellm", IsExcluded: true},
-        {Name: "Spotify", BundleID: "com.spotify.client", IsExcluded: false},
-    }
+	exclusions := []ExcludedApp{
+		{Name: "Safari", BundleID: "com.apple.Safari", IsExcluded: true},
+		{Name: "LiteLLM", CliPattern: "litellm", IsExcluded: true},
+		{Name: "Spotify", BundleID: "com.spotify.client", IsExcluded: false},
+	}
 
-    // 1. Match by Bundle ID
-    if !IsProcessExcluded("/Applications/Safari.app/Contents/MacOS/Safari", "com.apple.Safari", exclusions) {
-        t.Error("Expected Safari to be excluded by bundle ID")
-    }
+	em := &ExclusionManager{
+		exclusions: exclusions,
+	}
 
-    // 2. Match by CLI/Process name substring (e.g. litellm module python execution)
-    if !IsProcessExcluded("/usr/bin/python3 -m litellm", "", exclusions) {
-        t.Error("Expected litellm python script execution to match by process name substring")
-    }
+	// 1. Match by Bundle ID
+	if !em.IsExcluded("/Applications/Safari.app/Contents/MacOS/Safari", "com.apple.Safari") {
+		t.Error("Expected Safari to be excluded by bundle ID")
+	}
 
-    // 3. Do not match when isExcluded is false
-    if IsProcessExcluded("/Applications/Spotify.app/Contents/MacOS/Spotify", "com.spotify.client", exclusions) {
-        t.Error("Expected Spotify to NOT be excluded since isExcluded is false")
-    }
+	// 2. Match by CLI/Process name substring (e.g. litellm module python execution)
+	if !em.IsExcluded("/usr/bin/python3 -m litellm", "") {
+		t.Error("Expected litellm python script execution to match by process name substring")
+	}
 
-    // 4. Do not match arbitrary processes
-    if IsProcessExcluded("/usr/bin/curl", "", exclusions) {
-        t.Error("Expected curl to NOT be excluded")
-    }
+	// 3. Do not match when isExcluded is false
+	if em.IsExcluded("/Applications/Spotify.app/Contents/MacOS/Spotify", "com.spotify.client") {
+		t.Error("Expected Spotify to NOT be excluded since isExcluded is false")
+	}
+
+	// 4. Do not match arbitrary processes
+	if em.IsExcluded("/usr/bin/curl", "") {
+		t.Error("Expected curl to NOT be excluded")
+	}
 }

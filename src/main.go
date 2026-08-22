@@ -40,6 +40,12 @@ func main() {
         }
     }
 
+    exclusionManager, err := dnsd.StartExclusionWatcher(exclusionsPath)
+    if err != nil {
+        log.Fatalf("Failed to start exclusion watcher: %v", err)
+    }
+    defer exclusionManager.Close()
+
     // Initialize resolver with default upstreams
     r := dnsd.NewResolver(upstreams)
     
@@ -115,11 +121,10 @@ func main() {
         }
 
         // 1. Process matching and exclusions bypass check
-        exclusions, _ := dnsd.LoadExclusions(exclusionsPath)
         procName, bundleID, err := dnsd.GetProcessInfoForPort(uint16(cliAddr.Port))
         isExcluded := false
         if err == nil {
-            isExcluded = dnsd.IsProcessExcluded(procName, bundleID, exclusions)
+            isExcluded = exclusionManager.IsExcluded(procName, bundleID)
         }
 
         if isExcluded {
