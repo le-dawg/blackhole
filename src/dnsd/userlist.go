@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -32,16 +33,18 @@ func StartUserListWatcher(dir string, r *Resolver) (*UserLists, error) {
 	reload()
 
 	go func() {
+		var timer *time.Timer
 		for {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
 				}
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-					if event.Name == wlPath || event.Name == blPath {
-						reload()
+				if event.Name == wlPath || event.Name == blPath {
+					if timer != nil {
+						timer.Stop()
 					}
+					timer = time.AfterFunc(50*time.Millisecond, reload)
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -72,7 +75,8 @@ func loadList(path string) map[string]bool {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line != "" && !strings.HasPrefix(line, "#") {
-			m[strings.ToLower(line)] = true
+			line = strings.TrimSuffix(strings.ToLower(line), ".")
+			m[line] = true
 		}
 	}
 	return m

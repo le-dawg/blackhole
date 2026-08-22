@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+func assertEventually(t *testing.T, condition func() bool, msg string) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		if condition() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal(msg)
+}
+
 func TestUserListWatcher(t *testing.T) {
 	dir := t.TempDir()
 	wlPath := filepath.Join(dir, "whitelist.txt")
@@ -22,20 +33,14 @@ func TestUserListWatcher(t *testing.T) {
 	}
 	defer watcher.Close()
 
-	time.Sleep(100 * time.Millisecond) // Allow initial load
-
-	if res.Resolve("good.com") {
-		t.Error("good.com should be allowed")
-	}
-	if !res.Resolve("bad.com") {
-		t.Error("bad.com should be blocked")
-	}
+	assertEventually(t, func() bool {
+		return !res.Resolve("good.com") && res.Resolve("bad.com")
+	}, "initial list loading failed")
 
 	// Test hot reload
 	os.WriteFile(wlPath, []byte("good.com\nnewgood.com\n"), 0644)
-	time.Sleep(100 * time.Millisecond)
 
-	if res.Resolve("newgood.com") {
-		t.Error("newgood.com should be allowed after reload")
-	}
+	assertEventually(t, func() bool {
+		return !res.Resolve("newgood.com")
+	}, "newgood.com should be allowed after reload")
 }

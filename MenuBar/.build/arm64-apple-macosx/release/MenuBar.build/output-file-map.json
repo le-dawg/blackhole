@@ -1,0 +1,31 @@
+{
+  "": {
+    "dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/MenuBar.d",
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/MenuBar.o",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/primary.swiftdeps"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/BlackholeApp.swift": {
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/BlackholeApp.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/BlackholeApp~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/BlackholeApp.swiftdeps",
+    "diagnostics": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/BlackholeApp.dia"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/DNSHelper.swift": {
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/DNSHelper.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/DNSHelper~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/DNSHelper.swiftdeps",
+    "diagnostics": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/DNSHelper.dia"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/Models/ExclusionModel.swift": {
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/ExclusionModel.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/ExclusionModel~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/ExclusionModel.swiftdeps",
+    "diagnostics": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/ExclusionModel.dia"
+  },
+  "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/Views/PopoverView.swift": {
+    "object": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/PopoverView.swift.o",
+    "swiftmodule": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/PopoverView~partial.swiftmodule",
+    "swift-dependencies": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/PopoverView.swiftdeps",
+    "diagnostics": "/Users/thedawgctor/Desktop/dawgctor-personal-tools/blackhole/MenuBar/.build/arm64-apple-macosx/release/MenuBar.build/PopoverView.dia"
+  }
+}
