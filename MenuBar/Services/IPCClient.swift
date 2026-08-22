@@ -37,7 +37,7 @@ final class IPCClient: ObservableObject {
     func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
     
     private func fetchStats() {
-        Task.detached { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/stats", "-s"]
@@ -50,13 +50,13 @@ final class IPCClient: ObservableObject {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601 // Assume ISO8601 or similar if needed. Actually the spec doesn't say, default is fine.
             if let stats = try? decoder.decode(StatsResponse.self, from: data) {
-                await MainActor.run { self?.currentStats = stats }
+                DispatchQueue.main.async { self?.currentStats = stats }
             }
         }
     }
     
     private func fetchQueries() {
-        Task.detached { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
             task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/queries", "-s"]
@@ -79,7 +79,7 @@ final class IPCClient: ObservableObject {
                 }
             }
             
-            await MainActor.run { self?.queries = parsed.reversed() } // newest first
+            DispatchQueue.main.async { self?.queries = parsed.reversed() } // newest first
         }
     }
     
