@@ -7,11 +7,16 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var pauseFlag int32
+var (
+	pauseFlag  int32
+	pauseMutex sync.Mutex
+	pauseTimer *time.Timer
+)
 
 func IsPaused() bool {
 	return atomic.LoadInt32(&pauseFlag) == 1
@@ -34,12 +39,20 @@ func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.
 	
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(stats.Snapshot())
+		if err := json.NewEncoder(w).Encode(stats.Snapshot()); err != nil {
+			log.Printf("IPC Encode error (stats): %v", err)
+		}
 	})
 	
 	mux.HandleFunc("/queries", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rb.Snapshot())
+		enc := json.NewEncoder(w)
+		for _, q := range rb.Snapshot() {
+			if err := enc.Encode(q); err != nil {
+				log.Printf("IPC Encode error (queries): %v", err)
+				break
+			}
+		}
 	})
 	
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
@@ -51,16 +64,27 @@ func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.
 			return
 		}
 		
+		pauseMutex.Lock()
+		if pauseTimer != nil {
+			pauseTimer.Stop()
+		}
 		atomic.StoreInt32(&pauseFlag, 1)
-		time.AfterFunc(time.Duration(req.DurationSeconds)*time.Second, func() {
+		pauseTimer = time.AfterFunc(time.Duration(req.DurationSeconds)*time.Second, func() {
 			atomic.StoreInt32(&pauseFlag, 0)
 		})
+		pauseMutex.Unlock()
 		
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+		if err := json.NewEncoder(w).Encode(map[string]bool{"ok": true}); err != nil {
+			log.Printf("IPC Encode error (pause): %v", err)
+		}
 	})
 	
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  2 * time.Second,
+		WriteTimeout: 2 * time.Second,
+	}
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("IPC Server err: %v", err)
