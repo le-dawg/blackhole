@@ -66,13 +66,14 @@ Your parser should read from `r` and call `onDomain(domain)` for every domain th
 // Define your custom parser
 type MyParser struct {}
 
-func (p MyParser) Parse(data []byte) ([]string, error) {
+func (p MyParser) Parse(r io.Reader, onDomain func(string)) error {
     // Custom parsing logic here
-    return []string{}, nil
+    // call onDomain(domain) for each domain found
+    return nil
 }
 
 // Inject it using the API
-gravityInstance.SetParser(MyParser{})
+dnsd.SetParser(MyParser{})
 ```
 
 ## IPC API
