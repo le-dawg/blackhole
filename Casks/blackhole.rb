@@ -1,6 +1,6 @@
 cask "blackhole" do
   version "1.0.0"
-  sha256 "REPLACE_WITH_SHA256"
+  sha256 "4ebcf0965b585499ffe1bd61186cf44524e98a6aa30e886b7553d1fbf5ec22da"
 
   url "https://github.com/blackhole-dns/blackhole/releases/download/v#{version}/blackhole-release.zip"
   name "Blackhole"
