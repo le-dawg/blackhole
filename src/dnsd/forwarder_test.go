@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -9,35 +10,39 @@ import (
 )
 
 func TestRaceForward(t *testing.T) {
-	// Start two dummy UDP servers
-	startDummyServer := func(delay time.Duration, respBytes []byte) string {
-		conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
-		if err != nil {
-			t.Fatal(err)
-		}
-		go func() {
-			defer conn.Close()
-			buf := make([]byte, 512)
-			for {
-				_, addr, err := conn.ReadFromUDP(buf)
+	// Start two dummy "servers" using pipes
+	startDummyServer := func(delay time.Duration, respBytes []byte) (string, func(ctx context.Context, network, addr string) (net.Conn, error)) {
+		serverAddr := "dummy" + delay.String()
+		
+		dialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if addr != serverAddr {
+				return nil, net.ErrClosed
+			}
+			clientConn, serverConn := net.Pipe()
+			go func() {
+				defer serverConn.Close()
+				buf := make([]byte, 512)
+				// simulate read
+				_, err := serverConn.Read(buf)
 				if err != nil {
 					return
 				}
 				time.Sleep(delay)
-				conn.WriteToUDP(respBytes, addr)
-				return // handle one req
-			}
-		}()
-		return conn.LocalAddr().String()
+				serverConn.Write(respBytes)
+			}()
+			return clientConn, nil
+		}
+		
+		return serverAddr, dialer
 	}
 
 	fastResp := []byte("fast response")
 	slowResp := []byte("slow response")
 
-	fastServer := startDummyServer(10*time.Millisecond, fastResp)
-	slowServer := startDummyServer(100*time.Millisecond, slowResp)
+	fastAddr, fastDialer := startDummyServer(10*time.Millisecond, fastResp)
+	slowAddr, slowDialer := startDummyServer(100*time.Millisecond, slowResp)
 
-	upstreams := []string{slowServer, fastServer}
+	upstreams := []string{slowAddr, fastAddr}
 
 	// Prepare dummy DNS message bytes
 	var msg dnsmessage.Message
@@ -51,7 +56,17 @@ func TestRaceForward(t *testing.T) {
 	}
 	rawMsg, _ := msg.Pack()
 
-	resp, err := RaceForward(rawMsg, upstreams, 500*time.Millisecond)
+	compositeDialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr == slowAddr {
+			return slowDialer(ctx, network, addr)
+		}
+		if addr == fastAddr {
+			return fastDialer(ctx, network, addr)
+		}
+		return nil, net.ErrClosed
+	}
+
+	resp, err := RaceForward(rawMsg, upstreams, 500*time.Millisecond, compositeDialer)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

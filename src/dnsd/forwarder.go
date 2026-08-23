@@ -8,7 +8,10 @@ import (
 	"time"
 )
 
-func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration) ([]byte, error) {
+func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) ([]byte, error) {
+	if dialContext == nil {
+		dialContext = (&net.Dialer{}).DialContext
+	}
 	if len(upstreams) == 0 {
 		return nil, errors.New("no upstreams configured")
 	}
@@ -23,8 +26,7 @@ func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration) ([]by
 		wg.Add(1)
 		go func(server string) {
 			defer wg.Done()
-			var d net.Dialer
-			conn, err := d.DialContext(ctx, "udp", server)
+			conn, err := dialContext(ctx, "udp", server)
 			if err != nil {
 				return
 			}

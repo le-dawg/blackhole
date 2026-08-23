@@ -77,9 +77,18 @@ func (d *Daemon) Start(ctx context.Context) error {
 	rb := NewRingBuffer(1000)
 	stats := NewGlobalStats()
 
-	_, err = StartIPCServer(d.config.SocketPath, rb, stats)
+	os.Remove(d.config.SocketPath)
+	ipcListener, err := net.Listen("unix", d.config.SocketPath)
 	if err != nil {
-		log.Printf("Warning: Failed to start IPC server: %v", err)
+		log.Printf("Warning: Failed to listen on IPC socket: %v", err)
+	} else {
+		if err := os.Chmod(d.config.SocketPath, 0666); err != nil {
+			log.Printf("Warning: failed to chmod IPC socket: %v", err)
+		}
+		_, err = StartIPCServer(ipcListener, rb, stats)
+		if err != nil {
+			log.Printf("Warning: Failed to start IPC server: %v", err)
+		}
 	}
 
 	d.runMessageLoop(conn, exclusionManager, r, rb, stats)
@@ -190,7 +199,7 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 	currentUpstreams := d.upstreams
 	d.upstreamMu.RUnlock()
 
-	respRaw, err := RaceForward(raw, currentUpstreams, 500*time.Millisecond)
+	respRaw, err := RaceForward(raw, currentUpstreams, 500*time.Millisecond, nil)
 	if err == nil {
 		var respMsg dnsmessage.Message
 		if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
