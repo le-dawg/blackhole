@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"context"
 	"net"
 	"os"
 	"os/exec"
@@ -8,6 +9,11 @@ import (
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	go StartProcessMonitor(context.Background())
+	os.Exit(m.Run())
+}
 
 func TestProcessCorrelationInactive(t *testing.T) {
 	// Ephemeral ports without active sockets should fail cleanly or return empty

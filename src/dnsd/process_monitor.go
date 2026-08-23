@@ -212,6 +212,10 @@ var (
 
 var scanTasks = make(chan uint16, 100)
 
+func init() {
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
+}
+
 func StartProcessMonitor(ctx context.Context) {
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
