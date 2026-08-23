@@ -14,14 +14,10 @@ else
 fi
 
 echo "Stopping existing daemon (if any)..."
-launchctl bootout gui/$(id -u)/com.solution8.blackhole.dnsd 2>/dev/null || true
 launchctl bootout gui/$(id -u)/com.blackhole.dnsd 2>/dev/null || true
-launchctl bootout system/com.solution8.blackhole.dnsd 2>/dev/null || true
 launchctl bootout system/com.blackhole.dnsd 2>/dev/null || true
 launchctl unload /Library/LaunchDaemons/com.blackhole.dnsd.plist 2>/dev/null || true
 
-echo "Building Go DNS daemon binary..."
-go build -o blackhole-dnsd src/main.go
 
 echo "Removing Gatekeeper quarantine..."
 xattr -rd com.apple.quarantine blackhole-dnsd 2>/dev/null || true

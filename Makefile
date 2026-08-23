@@ -7,6 +7,15 @@ preflight:
 	go test -race ./src/dnsd/...
 	govulncheck ./...
 
+package: build
+	rm -rf blackhole-release
+	mkdir -p blackhole-release/Blackhole.app/Contents/MacOS
+	cp bin/blackhole-dnsd blackhole-release/
+	cp MenuBar/.build/release/MenuBar blackhole-release/Blackhole.app/Contents/MacOS/Blackhole
+	cp install.sh blackhole-release/
+	cp com.blackhole.dnsd.plist blackhole-release/
+	zip -r blackhole-release.zip blackhole-release
+
 build:
 	mkdir -p bin
 	go build -o bin/blackhole-dnsd ./src
