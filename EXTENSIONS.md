@@ -115,7 +115,7 @@ Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
     "Google Chrome": 120,
     "Spotify": 80
   },
-  "windowStart": "2026-08-22T22:11:51Z"
+  "windowStart": "2026-08-22T22:00:00Z"
 }
 ```
 
