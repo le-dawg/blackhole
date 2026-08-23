@@ -85,6 +85,13 @@ actor UnixSocketTransport {
                             receiveAllData(connection: connection, queue: queue) { result in
                                 switch result {
                                 case .success(let responseData):
+                                    // Security Fix: Validate that the response physically starts with "HTTP/"
+                                    guard responseData.starts(with: "HTTP/".utf8) else {
+                                        complete(result: .failure(TransportError.invalidResponse))
+                                        connection.cancel()
+                                        return
+                                    }
+                                    
                                     if let statusRange = responseData.range(of: Data("\r\n".utf8)) {
                                         let statusLine = String(data: responseData.subdata(in: responseData.startIndex..<statusRange.lowerBound), encoding: .utf8) ?? ""
                                         let components = statusLine.split(separator: " ")
