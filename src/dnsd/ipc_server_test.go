@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,41 +125,72 @@ func TestIPCServer_PauseEndpoint(t *testing.T) {
 }
 
 func TestIPCServer_PeerCredRejection(t *testing.T) {
-	tmpFile := filepath.Join("/tmp", "ipc_test.sock")
-	l, err := net.Listen("unix", tmpFile)
+	// 1. Success case: Allowed UID
+	tmpFile1 := filepath.Join(t.TempDir(), "ipc_test1.sock")
+	l1, err := net.Listen("unix", tmpFile1)
 	if err != nil {
-		t.Fatalf("failed to listen on unix socket: %v", err)
+		t.Fatalf("failed to listen: %v", err)
 	}
-	defer l.Close()
+	defer l1.Close()
 
-	unixListener, ok := l.(*net.UnixListener)
-	if !ok {
-		t.Fatalf("expected *net.UnixListener")
-	}
-
-	// Create AuthenticatedUnixListener with an impossible UID to force auth rejection
-	authListener := &AuthenticatedUnixListener{
-		UnixListener: unixListener,
-		AllowedUIDs:  []uint32{999999999}, // Assumes this UID does not match the test runner
+	authListener1 := &AuthenticatedUnixListener{
+		UnixListener: l1.(*net.UnixListener),
+		AllowedUIDs:  []uint32{uint32(os.Getuid())},
 	}
 
-	// Connect to the socket in the background to trigger Accept()
+	rb := NewRingBuffer(10)
+	st := NewGlobalStats()
+	srv, err := StartIPCServer(authListener1, rb, st)
+	if err != nil {
+		t.Fatalf("failed to start server: %v", err)
+	}
+	defer srv.Shutdown(context.Background())
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("unix", tmpFile1)
+			},
+		},
+	}
+
+	resp, err := client.Get("http://dummy/stats")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	// 2. Failure case: Rejected UID
+	tmpFile2 := filepath.Join(t.TempDir(), "ipc_test2.sock")
+	l2, err := net.Listen("unix", tmpFile2)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	
+	authListener2 := &AuthenticatedUnixListener{
+		UnixListener: l2.(*net.UnixListener),
+		AllowedUIDs:  []uint32{999999999},
+	}
+
 	go func() {
-		conn, err := net.Dial("unix", tmpFile)
+		time.Sleep(50 * time.Millisecond) // Give Accept a chance to start
+		conn, err := net.Dial("unix", tmpFile2)
 		if err == nil {
 			conn.Close()
 		}
+		time.Sleep(50 * time.Millisecond) // Give the rejected connection loop a chance
+		authListener2.Close()
 	}()
 
-	// Accept the connection, which should fail due to peer-credential rejection
-	_, err = authListener.Accept()
+	_, err = authListener2.Accept()
 	if err == nil {
-		t.Fatalf("expected Accept to fail due to unauthorized UID rejection, but it succeeded")
+		t.Fatalf("expected Accept to fail with closed error, but it succeeded")
 	}
-
-	// Explicitly prove the peer-credential auth branch fired using errors.Is
-	if !errors.Is(err, ErrUnauthorizedUID) {
-		t.Errorf("expected error ErrUnauthorizedUID, got: %v", err)
+	if !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
+		t.Errorf("expected closed network connection error, got: %v", err)
 	}
 }
 
