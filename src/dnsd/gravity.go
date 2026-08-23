@@ -15,7 +15,7 @@ var DefaultLists = []string{
 	"https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
 }
 
-func StartGravitySync(dir string, r *Resolver) {
+func StartGravitySync(dir string, r *FilterEngine) {
 	go func() {
 		refreshGravity(dir, r)
 		ticker := time.NewTicker(24 * time.Hour)
@@ -25,7 +25,7 @@ func StartGravitySync(dir string, r *Resolver) {
 	}()
 }
 
-func refreshGravity(dir string, r *Resolver) error {
+func refreshGravity(dir string, r *FilterEngine) error {
 	cachePath := filepath.Join(dir, "gravity.cache")
 	
 	// Fast path: load from cache if < 24h old
@@ -79,7 +79,7 @@ func refreshGravity(dir string, r *Resolver) error {
 	return loadCache(cachePath, r)
 }
 
-func loadCache(cachePath string, r *Resolver) error {
+func loadCache(cachePath string, r *FilterEngine) error {
 	f, err := os.Open(cachePath)
 	if err != nil {
 		return err
@@ -87,6 +87,7 @@ func loadCache(cachePath string, r *Resolver) error {
 	defer f.Close()
 	
 	scanner := bufio.NewScanner(f)
-	r.UpdateFromScanner(scanner)
+	newRoot := BuildTrieFromScanner(scanner)
+	r.UpdateRoot(newRoot)
 	return scanner.Err()
 }

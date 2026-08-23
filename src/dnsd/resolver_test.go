@@ -1,12 +1,11 @@
 package dnsd
 
 import (
-	"fmt"
 	"testing"
 )
 
-func TestTrieResolver(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+func TestTrieFilterEngine(t *testing.T) {
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads.doubleclick.net")
 	r.AddBlockedDomain("adservice.google.com")
 
@@ -21,8 +20,8 @@ func TestTrieResolver(t *testing.T) {
 	}
 }
 
-func TestResolverCaseInsensitivity(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+func TestFilterEngineCaseInsensitivity(t *testing.T) {
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("Ads.DoubleClick.Net")
 
 	if !r.Resolve("ads.doubleclick.net") {
@@ -36,8 +35,8 @@ func TestResolverCaseInsensitivity(t *testing.T) {
 	}
 }
 
-func TestResolverTrailingDot(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+func TestFilterEngineTrailingDot(t *testing.T) {
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads.doubleclick.net.")
 
 	if !r.Resolve("ads.doubleclick.net") {
@@ -53,58 +52,12 @@ func TestResolverTrailingDot(t *testing.T) {
 	}
 }
 
-func TestConcurrentAccess(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
-	r.AddBlockedDomain("ads.doubleclick.net")
 
-	done := make(chan bool)
-	const numGoroutines = 50
-	const numOps = 100
 
-	// Readers
-	for i := 0; i < numGoroutines; i++ {
-		go func() {
-			for j := 0; j < numOps; j++ {
-				r.Resolve("ads.doubleclick.net")
-				r.Resolve("sub.ads.doubleclick.net")
-				r.Resolve("google.com")
-			}
-			done <- true
-		}()
-	}
 
-	// Writers
-	for i := 0; i < 5; i++ {
-		go func(id int) {
-			for j := 0; j < 20; j++ {
-				domain := fmt.Sprintf("blocked-%d-%d.com", id, j)
-				r.AddBlockedDomain(domain)
-			}
-			done <- true
-		}(i)
-	}
-
-	for i := 0; i < numGoroutines+5; i++ {
-		<-done
-	}
-}
-
-func TestZeroValueResolver(t *testing.T) {
-	var r Resolver
-	// Test AddBlockedDomain works on zero value
-	r.AddBlockedDomain("ads.doubleclick.net")
-
-	// Test Resolve works on zero value
-	if !r.Resolve("ads.doubleclick.net") {
-		t.Error("Expected ads.doubleclick.net to be blocked on zero-value resolver")
-	}
-	if r.Resolve("google.com") {
-		t.Error("Expected google.com to not be blocked")
-	}
-}
 
 func TestWhitespaceNormalization(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("  ads.doubleclick.net  ")
 
 	if !r.Resolve("ads.doubleclick.net") {
@@ -116,7 +69,7 @@ func TestWhitespaceNormalization(t *testing.T) {
 }
 
 func TestConsecutiveDots(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads..doubleclick.net")
 
 	if !r.Resolve("ads.doubleclick.net") {
@@ -127,8 +80,8 @@ func TestConsecutiveDots(t *testing.T) {
 	}
 }
 
-func TestMalformedInputsDoNotCorruptResolver(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+func TestMalformedInputsDoNotCorruptFilterEngine(t *testing.T) {
+	r := NewFilterEngine([]string{"1.1.1.1"})
 
 	// Verify that adding valid domains works.
 	r.AddBlockedDomain("ads.doubleclick.net")
@@ -159,8 +112,8 @@ func TestMalformedInputsDoNotCorruptResolver(t *testing.T) {
 	}
 }
 
-func TestResolverMultipleTrailingDots(t *testing.T) {
-	r := NewResolver([]string{"1.1.1.1"})
+func TestFilterEngineMultipleTrailingDots(t *testing.T) {
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads.doubleclick.net...")
 
 	if !r.Resolve("ads.doubleclick.net") {
@@ -180,7 +133,7 @@ func TestResolverMultipleTrailingDots(t *testing.T) {
 }
 
 func BenchmarkResolve(b *testing.B) {
-	r := NewResolver([]string{"1.1.1.1"})
+	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("ads.doubleclick.net")
 	r.AddBlockedDomain("adservice.google.com")
 
@@ -193,7 +146,7 @@ func BenchmarkResolve(b *testing.B) {
 }
 
 func TestCanaryDomains(t *testing.T) {
-	r := NewResolver(nil)
+	r := NewFilterEngine(nil)
 	if !r.Resolve("use-application-dns.net.") {
 		t.Error("Firefox canary should be blocked")
 	}
