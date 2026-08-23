@@ -216,8 +216,8 @@ func TestRefreshGravity_MalformedURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error on malformed URL, got nil")
 	}
-	if err.Error() != "no gravity lists available" {
-		t.Errorf("Expected 'no gravity lists available', got %v", err)
+	if !strings.Contains(err.Error(), "incomplete gravity sources") {
+		t.Errorf("Expected 'incomplete gravity sources', got %v", err)
 	}
 }
 
@@ -267,5 +267,41 @@ func TestRefreshGravity_ScannerErrorDoesNotCorruptTrie(t *testing.T) {
 	// Verify existing rule is still active
 	if !res.Resolve("existing-domain.com") {
 		t.Error("existing-domain.com should still be blocked; trie was corrupted!")
+	}
+}
+
+func TestRefreshGravity_PartialSourceFailurePreservesExistingTrie(t *testing.T) {
+	s1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0.0.0.0 bad1.com\n"))
+	}))
+	defer s1.Close()
+
+	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0.0.0.0 bad2.com\n"))
+	}))
+	defer s2.Close()
+
+	dir := t.TempDir()
+	DefaultLists = []string{s1.URL, s2.URL}
+
+	res := NewFilterEngine(nil)
+
+	err := refreshGravity(context.Background(), dir, res)
+	if err != nil {
+		t.Fatalf("Expected successful initial update, got error: %v", err)
+	}
+
+	if !res.Resolve("bad1.com") || !res.Resolve("bad2.com") {
+		t.Error("bad1.com and bad2.com should be blocked initially")
+	}
+
+	DefaultLists = []string{s1.URL, "http://invalid-missing-server-12345.local"}
+	newDir := t.TempDir()
+	err = refreshGravity(context.Background(), newDir, res)
+	if err == nil {
+		t.Fatal("Expected error due to partial source failure, got nil")
+	}
+	if !res.Resolve("bad1.com") || !res.Resolve("bad2.com") {
+		t.Error("bad1.com and bad2.com should still be blocked; trie was corrupted!")
 	}
 }

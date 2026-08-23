@@ -1,10 +1,9 @@
 package dnsd
 
 import (
-	"context"
 	"bufio"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -192,12 +191,12 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		writer := bufio.NewWriter(f)
 		parserMu.RLock()
 		var parser ListParser = &PiHoleParser{}
-		
+
 		var prefixes []string
 		for prefix := range parsersMap {
 			prefixes = append(prefixes, prefix)
 		}
-		
+
 		// Sort prefixes by length descending to match the longest prefix
 		sort.Slice(prefixes, func(i, j int) bool {
 			return len(prefixes[i]) > len(prefixes[j])
@@ -269,8 +268,8 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 
 	saveStateMap(statePath, stateMap)
 
-	if len(readers) == 0 {
-		return errors.New("no gravity lists available")
+	if len(readers) < len(DefaultLists) {
+		return fmt.Errorf("incomplete gravity sources: %d of %d available", len(readers), len(DefaultLists))
 	}
 
 	multiReader := io.MultiReader(readers...)
