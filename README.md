@@ -15,7 +15,7 @@ Blackhole is fundamentally built as an ultra-low-latency DNS forwarder augmented
    The heart of Blackhole is an optimized concurrent trie and local DNS cache that avoids heap allocations on the hot path. The `FilterEngine` efficiently evaluates domains against millions of blocklist entries.
    - **Multi-Reader Gravity:** Blocklists are downloaded asynchronously, cached per-source, and merged entirely using `io.MultiReader` into memory to prevent single-source failure regressions.
 2. **Dynamic Extension Chain (`forwarder.go`, `daemon.go`)**
-   Traffic traverses a highly extensible `FilterChain`. Extensions and custom filters can register themselves using `GetFilters()`, enabling enterprise proxying and advanced metrics gathering without fork-bombing the core logic.
+   Traffic traverses a highly extensible `FilterChain`. Extensions and custom filters can register themselves using `RegisterFilter()`, enabling enterprise proxying and advanced metrics gathering without fork-bombing the core logic.
 3. **IPC Interop (`ipc_server.go`)**
    Provides a stateless HTTP-over-Unix-socket interface that avoids legacy JSON-RPC and transient `/tmp` socket bugs, binding securely to `/var/run/blackhole.sock`.
 4. **App-Aware Exclusions (`process_monitor.go`, `exclusions.go`)**
