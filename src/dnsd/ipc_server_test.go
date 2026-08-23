@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
-
 func TestIPCServer(t *testing.T) {
 	// Use net.Pipe for mock listener
 	clientConn, serverConn := net.Pipe()
@@ -158,9 +158,15 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 	}
 
 	rb := NewRingBuffer(10)
-	rb.Push(QueryRecord{Domain: "blocked.com", Status: "Blocked"})
-	rb.Push(QueryRecord{Domain: "allowed.com", Status: "Allowed"})
-	rb.Push(QueryRecord{Domain: "excluded.com", Status: "Excluded"})
+	
+	now := time.Now().Truncate(time.Second).UTC()
+	record1 := QueryRecord{Timestamp: now, Domain: "blocked.com", QueryType: 1, Status: "Blocked", ProcessName: "curl", BundleID: "com.apple.curl", LatencyMs: 10.5}
+	record2 := QueryRecord{Timestamp: now.Add(time.Second), Domain: "allowed.com", QueryType: 28, Status: "Allowed", ProcessName: "safari", BundleID: "com.apple.Safari", LatencyMs: 15.2}
+	record3 := QueryRecord{Timestamp: now.Add(2 * time.Second), Domain: "excluded.com", QueryType: 1, Status: "Excluded", ProcessName: "chrome", BundleID: "com.google.Chrome", LatencyMs: 5.0}
+
+	rb.Push(record1)
+	rb.Push(record2)
+	rb.Push(record3)
 
 	st := NewGlobalStats()
 	srv, err := StartIPCServer(listener, rb, st)
@@ -214,14 +220,32 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 		records = append(records, rec)
 	}
 
-	if len(records) != 3 {
-		t.Fatalf("expected 3 records, got %d", len(records))
+	expectedRecords := []QueryRecord{record1, record2, record3}
+	if len(records) != len(expectedRecords) {
+		t.Fatalf("expected %d records, got %d", len(expectedRecords), len(records))
 	}
 
-	expectedStatuses := []string{"Blocked", "Allowed", "Excluded"}
-	for i, st := range expectedStatuses {
-		if records[i].Status != st {
-			t.Errorf("record %d: expected status %s, got %s", i, st, records[i].Status)
+	for i, expected := range expectedRecords {
+		if !records[i].Timestamp.Equal(expected.Timestamp) {
+			t.Errorf("record %d: expected Timestamp %v, got %v", i, expected.Timestamp, records[i].Timestamp)
+		}
+		if records[i].Domain != expected.Domain {
+			t.Errorf("record %d: expected Domain %v, got %v", i, expected.Domain, records[i].Domain)
+		}
+		if records[i].QueryType != expected.QueryType {
+			t.Errorf("record %d: expected QueryType %v, got %v", i, expected.QueryType, records[i].QueryType)
+		}
+		if records[i].Status != expected.Status {
+			t.Errorf("record %d: expected Status %v, got %v", i, expected.Status, records[i].Status)
+		}
+		if records[i].ProcessName != expected.ProcessName {
+			t.Errorf("record %d: expected ProcessName %v, got %v", i, expected.ProcessName, records[i].ProcessName)
+		}
+		if records[i].BundleID != expected.BundleID {
+			t.Errorf("record %d: expected BundleID %v, got %v", i, expected.BundleID, records[i].BundleID)
+		}
+		if records[i].LatencyMs != expected.LatencyMs {
+			t.Errorf("record %d: expected LatencyMs %v, got %v", i, expected.LatencyMs, records[i].LatencyMs)
 		}
 	}
 }

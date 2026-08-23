@@ -364,3 +364,42 @@ func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
+
+func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
+	// Start with context 1 and cancel it immediately.
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	go StartProcessMonitor(ctx1)
+	
+	// Create some artificial load by firing queries that trigger scanTasks
+	for i := 0; i < 50; i++ {
+		go GetProcessInfoForPort(uint16(10000+i), []string{"dummy"})
+	}
+
+	cancel1()
+
+	// Wait briefly to allow cancellation to propagate
+	time.Sleep(50 * time.Millisecond)
+
+	// Start with context 2, which should wait for ctx1 workers to cleanly shut down
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	
+	monitorDone := make(chan struct{})
+	go func() {
+		StartProcessMonitor(ctx2)
+		close(monitorDone)
+	}()
+
+	// Create some load for ctx2
+	for i := 0; i < 50; i++ {
+		go GetProcessInfoForPort(uint16(20000+i), []string{"dummy"})
+	}
+
+	cancel2()
+	
+	select {
+	case <-monitorDone:
+		// Success
+	case <-time.After(2 * time.Second):
+		t.Fatalf("StartProcessMonitor did not terminate cleanly after cancellation")
+	}
+}
