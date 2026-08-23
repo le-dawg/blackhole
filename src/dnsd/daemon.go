@@ -40,7 +40,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	r := NewFilterEngine(d.upstreams)
 
-	StartGravitySync(d.config.DataDir, r)
+	StartGravitySync(ctx, d.config.DataDir, r)
 	userLists, err := StartUserListWatcher(d.config.DataDir, r)
 	if err != nil {
 		log.Printf("Warning: failed to start user list watcher: %v", err)

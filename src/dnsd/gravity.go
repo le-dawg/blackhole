@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"context"
 	"bufio"
 	"encoding/json"
 	"errors"
@@ -89,12 +90,18 @@ func saveStateMap(path string, m map[string]GravityState) {
 	}
 }
 
-func StartGravitySync(dir string, r *FilterEngine) {
+func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) {
 	go func() {
 		refreshGravity(dir, r)
 		ticker := time.NewTicker(24 * time.Hour)
-		for range ticker.C {
-			refreshGravity(dir, r)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refreshGravity(dir, r)
+			}
 		}
 	}()
 }
