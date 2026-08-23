@@ -40,4 +40,4 @@ Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC), de
 - **Dynamic Allowlisting/Blocklisting:** Add or remove domains from the active lists on the fly.
 - **State Management:** Pause or resume filtering dynamically.
 
-To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/tmp/blackholed.sock`) and send JSON-RPC payloads as defined in the IPC handlers.
+To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackholed.sock`) and send HTTP payloads as defined in the IPC handlers.
