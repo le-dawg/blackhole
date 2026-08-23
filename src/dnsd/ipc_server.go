@@ -117,6 +117,10 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 	})
 
 	mux.HandleFunc("/queries", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
 		for _, q := range rb.Snapshot() {

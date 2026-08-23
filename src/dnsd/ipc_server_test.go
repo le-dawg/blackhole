@@ -150,3 +150,35 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 		t.Errorf("expected error ErrUnauthorizedUID, got: %v", err)
 	}
 }
+
+func TestIPCServer_QueriesEndpoint(t *testing.T) {
+	listener := &MockIPCListener{
+		connCh: make(chan net.Conn, 10),
+	}
+
+	rb := NewRingBuffer(10)
+	st := NewGlobalStats()
+	srv, err := StartIPCServer(listener, rb, st)
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	defer srv.Shutdown(context.Background())
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				clientConn, serverConn := net.Pipe()
+				listener.connCh <- serverConn
+				return clientConn, nil
+			},
+		},
+	}
+
+	resp, err := client.Post("http://dummy/queries", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 Method Not Allowed, got %d", resp.StatusCode)
+	}
+}
