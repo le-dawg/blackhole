@@ -169,3 +169,37 @@ func TestRegisterParserForURL_LongestPrefixMatch(t *testing.T) {
 		t.Error("Expected long prefix parser to be executed (longest prefix wins)")
 	}
 }
+
+func TestStartGravitySync_Lifecycle(t *testing.T) {
+	dir := t.TempDir()
+	res := NewFilterEngine(nil)
+
+	// Test case 1: invalid lists lead to error
+	DefaultLists = []string{"http://invalid.local"} // Will fail to resolve/connect
+	err := StartGravitySync(context.Background(), dir, res)
+	if err == nil {
+		t.Fatal("Expected error on invalid lists, got nil")
+	}
+
+	// Test case 2: valid lists sync correctly
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("0.0.0.0 ads.test.com\n"))
+	}))
+	defer server.Close()
+
+	DefaultLists = []string{server.URL}
+	
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = StartGravitySync(ctx, dir, res)
+	if err != nil {
+		t.Fatalf("Expected nil error on valid list, got: %v", err)
+	}
+
+	if !res.Resolve("ads.test.com") {
+		t.Error("ads.test.com should be blocked")
+	}
+	
+	cancel()
+}

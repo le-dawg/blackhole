@@ -3,6 +3,7 @@ package dnsd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -42,7 +43,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	// Initialize the monitor and fix the leak
 	StartProcessMonitor(ctx)
-	StartGravitySync(ctx, d.config.DataDir, r)
+	if err := StartGravitySync(ctx, d.config.DataDir, r); err != nil {
+		return fmt.Errorf("failed to initialize gravity blocklists: %w", err)
+	}
 	userLists, err := StartUserListWatcher(d.config.DataDir, r)
 	if err != nil {
 		log.Printf("Warning: failed to start user list watcher: %v", err)

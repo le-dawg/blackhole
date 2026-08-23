@@ -216,7 +216,32 @@ func init() {
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 }
 
+var (
+	processMonitorMu     sync.Mutex
+	processMonitorCancel context.CancelFunc
+)
+
 func StartProcessMonitor(ctx context.Context) {
+	processMonitorMu.Lock()
+	defer processMonitorMu.Unlock()
+
+	if processMonitorCancel != nil {
+		processMonitorCancel()
+	}
+
+	monitorCtx, cancel := context.WithCancel(ctx)
+	processMonitorCancel = cancel
+
+	// Drain any stale scan tasks from previous lifetime
+drainLoop:
+	for {
+		select {
+		case <-scanTasks:
+		default:
+			break drainLoop
+		}
+	}
+
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	// 1. Process Janitor Loop
@@ -225,7 +250,7 @@ func StartProcessMonitor(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-monitorCtx.Done():
 				return
 			case <-ticker.C:
 				now := time.Now()
@@ -264,7 +289,7 @@ func StartProcessMonitor(ctx context.Context) {
 	go func() {
 		for {
 			select {
-			case <-ctx.Done():
+			case <-monitorCtx.Done():
 				return
 			case port := <-scanTasks:
 				processScanMu.Lock()

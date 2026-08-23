@@ -90,9 +90,12 @@ func saveStateMap(path string, m map[string]GravityState) {
 	}
 }
 
-func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) {
+func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) error {
+	if err := refreshGravity(ctx, dir, r); err != nil {
+		return fmt.Errorf("failed initial gravity refresh: %w", err)
+	}
+
 	go func() {
-		refreshGravity(ctx, dir, r)
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -100,10 +103,13 @@ func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				refreshGravity(ctx, dir, r)
+				if err := refreshGravity(ctx, dir, r); err != nil {
+					log.Printf("Gravity background update error: %v", err)
+				}
 			}
 		}
 	}()
+	return nil
 }
 
 func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
