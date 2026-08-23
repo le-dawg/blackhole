@@ -92,7 +92,7 @@ func saveStateMap(path string, m map[string]GravityState) {
 
 func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) {
 	go func() {
-		refreshGravity(dir, r)
+		refreshGravity(ctx, dir, r)
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -100,13 +100,13 @@ func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				refreshGravity(dir, r)
+				refreshGravity(ctx, dir, r)
 			}
 		}
 	}()
 }
 
-func refreshGravity(dir string, r *FilterEngine) error {
+func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	statePath := filepath.Join(dir, "gravity.state.json")
 	stateMap := loadStateMap(statePath)
 
@@ -124,7 +124,7 @@ func refreshGravity(dir string, r *FilterEngine) error {
 	for i, url := range DefaultLists {
 		cachePath := filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", i))
 
-		req, _ := http.NewRequest("GET", url, nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if state, ok := stateMap[url]; ok {
 			if state.ETag != "" {
 				req.Header.Set("If-None-Match", state.ETag)

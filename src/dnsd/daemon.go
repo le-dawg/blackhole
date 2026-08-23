@@ -40,6 +40,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	r := NewFilterEngine(d.upstreams)
 
+	// Initialize the monitor and fix the leak
+	StartProcessMonitor(ctx)
 	StartGravitySync(ctx, d.config.DataDir, r)
 	userLists, err := StartUserListWatcher(d.config.DataDir, r)
 	if err != nil {

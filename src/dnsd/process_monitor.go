@@ -210,39 +210,90 @@ var (
 	fdsScratch      []C.struct_proc_fdinfo
 )
 
-func init() {
+var scanTasks = make(chan uint16, 100)
+
+func StartProcessMonitor(ctx context.Context) {
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
+
+	// 1. Process Janitor Loop
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
-		for range ticker.C {
-			now := time.Now()
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
 
-			cache := portToPIDCache.Load()
-			newMappings := make(map[uint16]portPIDEntry)
-			for port, entry := range cache.Mappings {
-				ttl := 5 * time.Second
-				if entry.err != nil {
-					ttl = 2 * time.Second
+				cache := portToPIDCache.Load()
+				newMappings := make(map[uint16]portPIDEntry)
+				for port, entry := range cache.Mappings {
+					ttl := 5 * time.Second
+					if entry.err != nil {
+						ttl = 2 * time.Second
+					}
+					if now.Sub(entry.createdAt) < ttl {
+						newMappings[port] = entry
+					}
 				}
-				if now.Sub(entry.createdAt) < ttl {
-					newMappings[port] = entry
-				}
-			}
-			portToPIDCache.Store(&PortCache{Mappings: newMappings})
+				portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
-			pidMetadataCacheMu.Lock()
-			for pid, entry := range pidMetadataCache {
-				if now.Sub(entry.createdAt) >= 1*time.Minute {
-					delete(pidMetadataCache, pid)
+				pidMetadataCacheMu.Lock()
+				for pid, entry := range pidMetadataCache {
+					if now.Sub(entry.createdAt) >= 1*time.Minute {
+						delete(pidMetadataCache, pid)
+					}
 				}
-			}
-			pidMetadataCacheMu.Unlock()
+				pidMetadataCacheMu.Unlock()
 
-			bundleIDCacheMu.Lock()
-			if len(bundleIDCache) > 500 {
-				bundleIDCache = make(map[string]string)
+				bundleIDCacheMu.Lock()
+				if len(bundleIDCache) > 500 {
+					bundleIDCache = make(map[string]string)
+				}
+				bundleIDCacheMu.Unlock()
 			}
-			bundleIDCacheMu.Unlock()
+		}
+	}()
+
+	// 2. Scan Worker Loop
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case port := <-scanTasks:
+				processScanMu.Lock()
+				
+				cache := portToPIDCache.Load()
+				if entry, found := cache.Mappings[port]; found {
+					ttl := 5 * time.Second
+					if entry.err != nil {
+						ttl = 2 * time.Second
+					}
+					if time.Since(entry.createdAt) < ttl {
+						processScanMu.Unlock()
+						continue
+					}
+				}
+
+				_, err := getProcessInfoForPortNoCache(port)
+				
+				oldCache := portToPIDCache.Load()
+				newMappings := make(map[uint16]portPIDEntry)
+				for k, v := range oldCache.Mappings {
+					newMappings[k] = v
+				}
+				
+				if err != nil {
+					newMappings[port] = portPIDEntry{
+						createdAt: time.Now(),
+						err:       err,
+					}
+					portToPIDCache.Store(&PortCache{Mappings: newMappings})
+				}
+				processScanMu.Unlock()
+			}
 		}
 	}()
 }
@@ -365,38 +416,13 @@ func GetProcessInfoForPort(port uint16, patterns []string) (string, string, erro
 		}
 	}
 
-	// Trigger async scan if not found or expired
-	go func() {
-		processScanMu.Lock()
-		defer processScanMu.Unlock()
-		
-		cache := portToPIDCache.Load()
-		if entry, found := cache.Mappings[port]; found {
-			ttl := 5 * time.Second
-			if entry.err != nil {
-				ttl = 2 * time.Second
-			}
-			if time.Since(entry.createdAt) < ttl {
-				return
-			}
-		}
-
-		_, err := getProcessInfoForPortNoCache(port)
-		
-		oldCache := portToPIDCache.Load()
-		newMappings := make(map[uint16]portPIDEntry)
-		for k, v := range oldCache.Mappings {
-			newMappings[k] = v
-		}
-		
-		if err != nil {
-			newMappings[port] = portPIDEntry{
-				createdAt: time.Now(),
-				err:       err,
-			}
-			portToPIDCache.Store(&PortCache{Mappings: newMappings})
-		}
-	}()
+	// Trigger async scan using the bounded worker channel
+	select {
+	case scanTasks <- port:
+		// Task submitted
+	default:
+		// Queue full, drop scan request to avoid backpressure
+	}
 
 	return "Unknown", "", nil
 }
