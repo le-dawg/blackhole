@@ -166,7 +166,9 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 		log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
 		d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
 	} else {
-		chain = FilterChain{r}
+		// FIXED: Append GetFilters() to the chain so registered extensions actually run.
+		chain = append(FilterChain{r}, GetFilters()...)
+		
 		if r.Resolve(domain) {
 			status = "Blocked"
 			log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
