@@ -56,7 +56,7 @@ final class IPCClient: IPCClientProtocol {
                 let stats = try decoder.decode(StatsResponse.self, from: data)
                 self.currentStats = stats
             } catch {
-                // Ignore errors for polling
+                print("Failed to fetch stats/queries: \(error)")
             }
         }
     }
@@ -83,7 +83,7 @@ final class IPCClient: IPCClientProtocol {
                 
                 self.queries = parsed.reversed() // newest first
             } catch {
-                // Ignore errors for polling
+                print("Failed to fetch stats/queries: \(error)")
             }
         }
     }
