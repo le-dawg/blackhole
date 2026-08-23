@@ -74,14 +74,14 @@ Retrieves current operational metrics and statistics.
   "total": 54210,
   "blocked": 10452,
   "blockPercent": 19.28,
-  "topDomains": [
-    "ads.example.com",
-    "tracker.example.com"
-  ],
-  "topApps": [
-    "Google Chrome",
-    "Spotify"
-  ],
-  "windowStart": 1692800000
+  "topDomains": {
+    "ads.example.com": 1234,
+    "tracker.example.com": 567
+  },
+  "topApps": {
+    "Google Chrome": 890,
+    "Spotify": 120
+  },
+  "windowStart": "2023-08-23T15:00:00Z"
 }
 ```
