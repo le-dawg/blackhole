@@ -3,7 +3,7 @@ package dnsd
 import (
 	"bufio"
 	"strings"
-	"sync"
+	"sync/atomic"
 )
 
 type trieNode struct {
@@ -11,40 +11,43 @@ type trieNode struct {
 	isEnd    bool
 }
 
-// Resolver is a concurrency-safe DNS blocklist resolver that uses a trie structure
-// to match domain queries against a list of blocked domains. It supports efficient
-// lookup of subdomains under blocked parent domains.
-type Resolver struct {
-	mu        sync.RWMutex
+type engineState struct {
 	root      *trieNode
-	upstreams []string
 	whitelist map[string]bool
 	blacklist map[string]bool
 }
 
-// NewResolver initializes and returns a new *Resolver with the provided upstream DNS servers.
-func NewResolver(upstreams []string) *Resolver {
-	return &Resolver{
-		root:      &trieNode{},
+// FilterEngine is a concurrency-safe DNS blocklist resolver backed by atomic.Value.
+type FilterEngine struct {
+	state     atomic.Value
+	upstreams []string
+}
+
+// NewFilterEngine initializes and returns a new *FilterEngine.
+func NewFilterEngine(upstreams []string) *FilterEngine {
+	e := &FilterEngine{
 		upstreams: upstreams,
 	}
+	e.state.Store(&engineState{
+		root:      &trieNode{},
+		whitelist: make(map[string]bool),
+		blacklist: make(map[string]bool),
+	})
+	return e
 }
 
 func needsNormalization(domain string) bool {
 	if domain == "" {
 		return false
 	}
-	// Check first character for whitespace
 	first := domain[0]
 	if first <= ' ' {
 		return true
 	}
-	// Check last character for whitespace or dot
 	last := domain[len(domain)-1]
 	if last <= ' ' || last == '.' {
 		return true
 	}
-	// Check for any uppercase character, or non-ASCII spaces/chars
 	for i := 0; i < len(domain); i++ {
 		c := domain[i]
 		if c >= 'A' && c <= 'Z' {
@@ -67,56 +70,9 @@ func normalizeDomain(domain string) string {
 	return domain
 }
 
-// AddBlockedDomain normalizes and inserts a domain into the resolver's blocked trie.
-// It is safe for concurrent use. If a parent domain is already blocked, any subdomain
-// insertion is optimized away.
-func (r *Resolver) AddBlockedDomain(domain string) {
-	domain = normalizeDomain(domain)
-	if domain == "" {
-		return
-	}
-
-	parts := strings.Split(domain, ".")
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if r.root == nil {
-		r.root = &trieNode{}
-	}
-
-	node := r.root
-	inserted := false
-	for i := len(parts) - 1; i >= 0; i-- {
-		part := parts[i]
-		if part == "" {
-			continue
-		}
-		inserted = true
-		if node.isEnd {
-			// A parent domain is already blocked, so this subdomain is implicitly blocked.
-			// No need to insert further.
-			return
-		}
-		if node.children == nil {
-			node.children = make(map[string]*trieNode)
-		}
-		if _, exists := node.children[part]; !exists {
-			node.children[part] = &trieNode{}
-		}
-		node = node.children[part]
-	}
-	if !inserted {
-		return
-	}
-	node.isEnd = true
-	// Since this node is now blocked, all its children (more specific subdomains) are redundant.
-	// We can clear its children map to save memory.
-	node.children = nil
-}
-
-// UpdateFromScanner reads domains from a scanner and replaces the current blocklist trie.
-func (r *Resolver) UpdateFromScanner(scanner *bufio.Scanner) {
+// BuildTrieFromScanner reads domains from a scanner and builds a new Radix tree.
+// It returns the new root node.
+func BuildTrieFromScanner(scanner *bufio.Scanner) *trieNode {
 	newRoot := &trieNode{}
 	
 	for scanner.Scan() {
@@ -136,7 +92,6 @@ func (r *Resolver) UpdateFromScanner(scanner *bufio.Scanner) {
 			}
 			inserted = true
 			if node.isEnd {
-				// Parent domain already blocked
 				break
 			}
 			if node.children == nil {
@@ -152,24 +107,33 @@ func (r *Resolver) UpdateFromScanner(scanner *bufio.Scanner) {
 			node.children = nil
 		}
 	}
-
-	r.mu.Lock()
-	r.root = newRoot
-	r.mu.Unlock()
+	return newRoot
 }
 
-// SetLists updates the whitelist and blacklist used by the resolver.
-func (r *Resolver) SetLists(whitelist, blacklist map[string]bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.whitelist = whitelist
-	r.blacklist = blacklist
+// UpdateRoot completely replaces the radix tree in a zero-downtime pointer swap.
+func (e *FilterEngine) UpdateRoot(newRoot *trieNode) {
+	oldState := e.state.Load().(*engineState)
+	newState := &engineState{
+		root:      newRoot,
+		whitelist: oldState.whitelist,
+		blacklist: oldState.blacklist,
+	}
+	e.state.Store(newState)
 }
 
-// Resolve normalizes a domain and queries the trie to check if it is blocked.
-// It returns true if the domain or any of its parent domains are blocked, and false otherwise.
-// It is safe for concurrent use.
-func (r *Resolver) Resolve(domain string) bool {
+// SetLists updates the whitelist and blacklist.
+func (e *FilterEngine) SetLists(whitelist, blacklist map[string]bool) {
+	oldState := e.state.Load().(*engineState)
+	newState := &engineState{
+		root:      oldState.root,
+		whitelist: whitelist,
+		blacklist: blacklist,
+	}
+	e.state.Store(newState)
+}
+
+// Resolve checks if a domain is blocked.
+func (e *FilterEngine) Resolve(domain string) bool {
 	domain = normalizeDomain(domain)
 	if domain == "" {
 		return false
@@ -180,21 +144,20 @@ func (r *Resolver) Resolve(domain string) bool {
 		return true
 	}
 
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	state := e.state.Load().(*engineState)
 
-	if r.whitelist != nil && r.whitelist[domain] {
+	if state.whitelist != nil && state.whitelist[domain] {
 		return false
 	}
-	if r.blacklist != nil && r.blacklist[domain] {
+	if state.blacklist != nil && state.blacklist[domain] {
 		return true
 	}
 
-	if r.root == nil {
+	if state.root == nil {
 		return false
 	}
 
-	node := r.root
+	node := state.root
 	end := len(domain)
 	for end > 0 {
 		start := end - 1
@@ -221,4 +184,38 @@ func (r *Resolver) Resolve(domain string) bool {
 		}
 	}
 	return false
+}
+
+// AddBlockedDomain is provided for test compatibility.
+// It mutates the active tree in place without concurrency safety.
+func (e *FilterEngine) AddBlockedDomain(domain string) {
+	state := e.state.Load().(*engineState)
+	domain = normalizeDomain(domain)
+	if domain == "" {
+		return
+	}
+	parts := strings.Split(domain, ".")
+	node := state.root
+	inserted := false
+	for i := len(parts) - 1; i >= 0; i-- {
+		part := parts[i]
+		if part == "" {
+			continue
+		}
+		inserted = true
+		if node.isEnd {
+			return
+		}
+		if node.children == nil {
+			node.children = make(map[string]*trieNode)
+		}
+		if _, exists := node.children[part]; !exists {
+			node.children[part] = &trieNode{}
+		}
+		node = node.children[part]
+	}
+	if inserted {
+		node.isEnd = true
+		node.children = nil
+	}
 }

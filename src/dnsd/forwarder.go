@@ -72,3 +72,22 @@ func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialC
 		return nil, errors.New("upstream timeout")
 	}
 }
+
+// Filter defines an interface for filtering DNS requests.
+type Filter interface {
+	Process(req []byte) (resp []byte, block bool, err error)
+}
+
+// FilterChain is a chain of filters to be evaluated sequentially.
+type FilterChain []Filter
+
+// Process evaluates all filters in the chain.
+func (chain FilterChain) Process(req []byte) (resp []byte, block bool, err error) {
+	for _, filter := range chain {
+		resp, block, err = filter.Process(req)
+		if block || err != nil {
+			return resp, block, err
+		}
+	}
+	return nil, false, nil
+}
