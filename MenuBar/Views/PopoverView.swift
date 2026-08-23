@@ -1,11 +1,8 @@
 import SwiftUI
 
 struct PopoverView: View {
-    @Binding var isActive: Bool
-    let isMenuPresented: Bool
+    @Bindable var viewModel: AppViewModel
     @State private var selectedTab = 0
-    @Bindable var model: ExclusionModel
-    @StateObject private var ipc = IPCClient()
     
     @State private var newAppName = ""
     @State private var newBundleId = ""
@@ -22,7 +19,7 @@ struct PopoverView: View {
                         .font(.title2)
                         .foregroundStyle(
                             LinearGradient(
-                                colors: isActive ? [.blue, .purple] : [.gray, .secondary],
+                                colors: viewModel.isDnsActive ? [.blue, .purple] : [.gray, .secondary],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -34,22 +31,22 @@ struct PopoverView: View {
                 
                 Spacer()
                 
-                if isActive {
+                if viewModel.isDnsActive {
                     Menu {
                         Button("Disable for 5 minutes") {
-                            Task { try? await ipc.sendPause(durationSeconds: 300) }
-                            clearLocalDNS()
-                            isActive = false
+                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 300) }
+                            
+                            viewModel.setProtection(active: false)
                         }
                         Button("Disable for 15 minutes") {
-                            Task { try? await ipc.sendPause(durationSeconds: 900) }
-                            clearLocalDNS()
-                            isActive = false
+                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 900) }
+                            
+                            viewModel.setProtection(active: false)
                         }
                         Button("Disable indefinitely") {
-                            Task { try? await ipc.sendPause(durationSeconds: 86400) }
-                            clearLocalDNS()
-                            isActive = false
+                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 86400) }
+                            
+                            viewModel.setProtection(active: false)
                         }
                     } label: {
                         Text("Pause Protection")
@@ -59,9 +56,9 @@ struct PopoverView: View {
                     .fixedSize()
                 } else {
                     Button("Enable Protection") {
-                        Task { try? await ipc.sendPause(durationSeconds: 0) }
-                        setLocalDNS()
-                        isActive = true
+                        Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 0) }
+                        
+                        viewModel.setProtection(active: true)
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
@@ -101,7 +98,7 @@ struct PopoverView: View {
                     if selectedTab == 0 {
                         statusTabContent
                     } else if selectedTab == 1 {
-                        InspectorView(ipc: ipc)
+                        InspectorView(ipc: viewModel.ipcClient)
                     } else {
                         exclusionsTabContent
                     }
@@ -141,13 +138,9 @@ struct PopoverView: View {
         }
         .frame(width: 320, height: 400)
         .foregroundColor(.primary)
-        .onChange(of: model.excludedApps) {
-            if !model.isInitialLoad {
-                model.saveExclusionsDebounced()
-            }
-        }
+        
         .onAppear {
-            ipc.startPollingStats()
+            viewModel.onAppear()
             DispatchQueue.global(qos: .userInitiated).async {
                 let apps = AppScanner.getInstalledApps()
                 DispatchQueue.main.async {
@@ -156,7 +149,7 @@ struct PopoverView: View {
             }
         }
         .onDisappear {
-            ipc.stopPollingStats()
+            viewModel.onDisappear()
         }
     }
     
@@ -165,9 +158,9 @@ struct PopoverView: View {
         let trimmedBundle = newBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty, !trimmedBundle.isEmpty else { return }
         
-        if !model.excludedApps.contains(where: { $0.bundleId == trimmedBundle }) {
+        if !viewModel.exclusionModel.excludedApps.contains(where: { $0.bundleId == trimmedBundle }) {
             let newApp = ExcludedApp(name: trimmedName, bundleId: trimmedBundle, icon: "macwindow", isExcluded: true)
-            model.excludedApps.append(newApp)
+            viewModel.exclusionModel.excludedApps.append(newApp)
         }
         
         newAppName = ""
@@ -175,7 +168,7 @@ struct PopoverView: View {
     }
     
     private func deleteApp(_ app: ExcludedApp) {
-        model.excludedApps.removeAll { $0.bundleId == app.bundleId }
+        viewModel.exclusionModel.excludedApps.removeAll { $0.bundleId == app.bundleId }
     }
     
     private var statusTabContent: some View {
@@ -184,13 +177,13 @@ struct PopoverView: View {
             VStack(spacing: 12) {
                 HStack(spacing: 12) {
                     // Pulsing Indicator
-                    StatusIndicator(isActive: isActive, isMenuPresented: isMenuPresented)
+                    StatusIndicator(isActive: viewModel.isDnsActive, isMenuPresented: viewModel.isMenuPresented)
                     
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(isActive ? "Protection Active" : "Shield Offline")
+                        Text(viewModel.isDnsActive ? "Protection Active" : "Shield Offline")
                             .font(.system(.body, design: .rounded))
                             .fontWeight(.semibold)
-                        Text(isActive ? "Local DNS traffic is filtered" : "Traffic is unprotected")
+                        Text(viewModel.isDnsActive ? "Local DNS traffic is filtered" : "Traffic is unprotected")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -199,16 +192,16 @@ struct PopoverView: View {
                 .padding()
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(isActive ? Color.blue.opacity(0.08) : Color.white.opacity(0.04))
+                        .fill(viewModel.isDnsActive ? Color.blue.opacity(0.08) : Color.white.opacity(0.04))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(isActive ? Color.blue.opacity(0.2) : Color.white.opacity(0.08), lineWidth: 1)
+                        .stroke(viewModel.isDnsActive ? Color.blue.opacity(0.2) : Color.white.opacity(0.08), lineWidth: 1)
                 )
             }
             
             // Grid of metrics
-            if let stats = ipc.currentStats {
+            if let stats = viewModel.ipcClient.currentStats {
                 HStack(spacing: 12) {
                     MetricCard(
                         title: "TOTAL QUERIES",
@@ -300,7 +293,7 @@ struct PopoverView: View {
                 .padding(.bottom, 4)
             
             VStack(spacing: 0) {
-                ForEach($model.excludedApps) { $app in
+                ForEach($viewModel.exclusionModel.excludedApps) { $app in
                     HStack(spacing: 12) {
                         Image(systemName: app.icon)
                             .font(.body)
@@ -340,7 +333,7 @@ struct PopoverView: View {
                     }
                     .padding(.vertical, 8)
                     
-                    if app.bundleId != model.excludedApps.last?.bundleId {
+                    if app.bundleId != viewModel.exclusionModel.excludedApps.last?.bundleId {
                         Divider()
                             .background(Color.white.opacity(0.05))
                     }
