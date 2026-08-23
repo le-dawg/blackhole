@@ -220,7 +220,10 @@ var (
 	processMonitorMu     sync.Mutex
 	processMonitorCancel context.CancelFunc
 	processMonitorWg     sync.WaitGroup
+	activeWorkersCount   atomic.Int32
 )
+
+func ActiveWorkersCount() int32 { return activeWorkersCount.Load() }
 
 func StartProcessMonitor(ctx context.Context) {
 	processMonitorMu.Lock()
@@ -248,8 +251,10 @@ drainLoop:
 
 	// 1. Process Janitor Loop
 	processMonitorWg.Add(1)
+	activeWorkersCount.Add(1)
 	go func() {
 		defer processMonitorWg.Done()
+		defer activeWorkersCount.Add(-1)
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
 		for {
@@ -294,8 +299,10 @@ drainLoop:
 
 	// 2. Scan Worker Loop
 	processMonitorWg.Add(1)
+	activeWorkersCount.Add(1)
 	go func() {
 		defer processMonitorWg.Done()
+		defer activeWorkersCount.Add(-1)
 		for {
 			select {
 			case <-monitorCtx.Done():

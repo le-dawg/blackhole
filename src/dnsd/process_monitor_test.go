@@ -366,18 +366,23 @@ func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
 
 
 func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
-	// Start with context 1 and cancel it immediately.
+	// Start with context 1
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	go StartProcessMonitor(ctx1)
+	
+	// Let workers start
+	time.Sleep(50 * time.Millisecond)
+	
+	if count := ActiveWorkersCount(); count != 2 {
+		t.Fatalf("Expected 2 active workers, got %d", count)
+	}
 	
 	// Create some artificial load by firing queries that trigger scanTasks
 	for i := 0; i < 50; i++ {
 		go GetProcessInfoForPort(uint16(10000+i), []string{"dummy"})
 	}
 
-	cancel1()
-
-	// Wait briefly to allow cancellation to propagate
+	// Wait briefly to allow processing
 	time.Sleep(50 * time.Millisecond)
 
 	// Start with context 2, which should wait for ctx1 workers to cleanly shut down
@@ -386,20 +391,38 @@ func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 	monitorDone := make(chan struct{})
 	go func() {
 		StartProcessMonitor(ctx2)
+		
+		// Context 1 should have been cancelled by the new StartProcessMonitor call,
+		// and new workers launched. Let's verify zero accumulation.
+		if count := ActiveWorkersCount(); count != 2 {
+			t.Errorf("Expected 2 active workers after restart, got %d", count)
+		}
+		
 		close(monitorDone)
 	}()
+
+	<-monitorDone // wait for start
 
 	// Create some load for ctx2
 	for i := 0; i < 50; i++ {
 		go GetProcessInfoForPort(uint16(20000+i), []string{"dummy"})
 	}
 
+	cancel1() // cancel1 should be a no-op as it was cancelled inside StartProcessMonitor
 	cancel2()
 	
-	select {
-	case <-monitorDone:
-		// Success
-	case <-time.After(2 * time.Second):
-		t.Fatalf("StartProcessMonitor did not terminate cleanly after cancellation")
+	// Explicit teardown
+	processMonitorMu.Lock()
+	if processMonitorCancel != nil {
+		processMonitorCancel()
 	}
+	processMonitorWg.Wait()
+	processMonitorMu.Unlock()
+	
+	if count := ActiveWorkersCount(); count != 0 {
+		t.Fatalf("Expected 0 active workers after cancellation and wait, got %d", count)
+	}
+
+	// Restart so subsequent tests pass
+	go StartProcessMonitor(context.Background())
 }
