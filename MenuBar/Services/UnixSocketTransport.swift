@@ -1,79 +1,126 @@
 import Foundation
+import Network
 
 enum TransportError: Error {
     case connectionFailed
     case sendFailed
     case receiveFailed
     case invalidResponse
+    case timeout
 }
 
-struct UnixSocketTransport {
-    static func sendRequest(socketPath: String, endpoint: String, method: String = "GET", body: String? = nil) throws -> Data {
-        let sock = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard sock >= 0 else { throw TransportError.connectionFailed }
-        defer { close(sock) }
+final class StateWrapper: @unchecked Sendable {
+    var hasCompleted = false
+    let lock = NSLock()
+}
+
+actor UnixSocketTransport {
+    static func sendRequest(socketPath: String, endpoint: String, method: String = "GET", body: String? = nil) async throws -> Data {
+        let endpointNW = NWEndpoint.unix(path: socketPath)
+        let parameters = NWParameters.tcp
+        let connection = NWConnection(to: endpointNW, using: parameters)
+        let queue = DispatchQueue(label: "UnixSocketTransport")
         
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        
-        let pathBytes = socketPath.utf8CString
-        pathBytes.withUnsafeBufferPointer { bytesPtr in
-            withUnsafeMutablePointer(to: &addr.sun_path) {
-                $0.withMemoryRebound(to: CChar.self, capacity: 104) { ptr in
-                    _ = strncpy(ptr, bytesPtr.baseAddress, 103)
+        return try await withCheckedThrowingContinuation { continuation in
+            let state = StateWrapper()
+            
+            @Sendable func complete(result: Result<Data, Error>) {
+                state.lock.lock()
+                defer { state.lock.unlock() }
+                if !state.hasCompleted {
+                    state.hasCompleted = true
+                    switch result {
+                    case .success(let data):
+                        continuation.resume(returning: data)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+            
+            connection.stateUpdateHandler = { connState in
+                switch connState {
+                case .ready:
+                    var request = "\(method) \(endpoint) HTTP/1.0\r\nHost: localhost\r\n"
+                    if let body = body {
+                        request += "Content-Length: \(body.utf8.count)\r\n"
+                    }
+                    request += "\r\n"
+                    if let body = body {
+                        request += body
+                    }
+                    
+                    guard let requestData = request.data(using: .utf8) else {
+                        complete(result: .failure(TransportError.sendFailed))
+                        connection.cancel()
+                        return
+                    }
+                    
+                    connection.send(content: requestData, completion: .contentProcessed({ error in
+                        if error != nil {
+                            complete(result: .failure(TransportError.sendFailed))
+                            connection.cancel()
+                            return
+                        }
+                        
+                        receiveAllData(connection: connection, queue: queue) { result in
+                            switch result {
+                            case .success(let responseData):
+                                if let range = responseData.range(of: Data("\r\n\r\n".utf8)) {
+                                    complete(result: .success(responseData.subdata(in: range.upperBound..<responseData.count)))
+                                } else {
+                                    complete(result: .success(responseData))
+                                }
+                            case .failure(let error):
+                                complete(result: .failure(error))
+                            }
+                            connection.cancel()
+                        }
+                    }))
+                    
+                case .failed(_), .cancelled:
+                    complete(result: .failure(TransportError.connectionFailed))
+                default:
+                    break
+                }
+            }
+            
+            connection.start(queue: queue)
+        }
+    }
+    
+    private static func receiveAllData(connection: NWConnection, queue: DispatchQueue, completion: @escaping @Sendable (Result<Data, Error>) -> Void) {
+        final class Receiver: @unchecked Sendable {
+            var allData = Data()
+            let conn: NWConnection
+            let cb: (Result<Data, Error>) -> Void
+            init(conn: NWConnection, cb: @escaping @Sendable (Result<Data, Error>) -> Void) {
+                self.conn = conn
+                self.cb = cb
+            }
+            func start() {
+                receiveNext()
+            }
+            private func receiveNext() {
+                conn.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] data, context, isComplete, error in
+                    guard let self = self else { return }
+                    if let data = data, !data.isEmpty {
+                        self.allData.append(data)
+                    }
+                    if error != nil {
+                        self.cb(.failure(TransportError.receiveFailed))
+                        return
+                    }
+                    if isComplete {
+                        self.cb(.success(self.allData))
+                    } else {
+                        self.receiveNext()
+                    }
                 }
             }
         }
-        addr.sun_len = UInt8(MemoryLayout.size(ofValue: addr))
         
-        let addrSize = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let connectResult = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(sock, $0, addrSize)
-            }
-        }
-        
-        guard connectResult == 0 else { throw TransportError.connectionFailed }
-        
-        var request = "\(method) \(endpoint) HTTP/1.0\r\nHost: localhost\r\n"
-        if let body = body {
-            request += "Content-Length: \(body.utf8.count)\r\n"
-        }
-        request += "\r\n"
-        if let body = body {
-            request += body
-        }
-        
-        guard let requestData = request.data(using: .utf8) else {
-            throw TransportError.sendFailed
-        }
-        
-        let sendResult = requestData.withUnsafeBytes {
-            send(sock, $0.baseAddress, $0.count, 0)
-        }
-        guard sendResult >= 0 else { throw TransportError.sendFailed }
-        
-        var responseData = Data()
-        let bufferSize = 4096
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
-        defer { buffer.deallocate() }
-        
-        while true {
-            let bytesRead = recv(sock, buffer, bufferSize, 0)
-            if bytesRead > 0 {
-                responseData.append(buffer, count: bytesRead)
-            } else if bytesRead == 0 {
-                break // connection closed
-            } else {
-                throw TransportError.receiveFailed
-            }
-        }
-        
-        // Strip HTTP headers
-        if let range = responseData.range(of: Data("\r\n\r\n".utf8)) {
-            return responseData.subdata(in: range.upperBound..<responseData.count)
-        }
-        
-        return responseData
+        let receiver = Receiver(conn: connection, cb: completion)
+        receiver.start()
     }
 }

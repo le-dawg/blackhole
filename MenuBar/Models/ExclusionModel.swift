@@ -45,9 +45,7 @@ class ExclusionModel {
                 ExcludedApp(name: "Terminal", bundleId: "com.apple.Terminal", icon: "terminal.fill", isExcluded: false)
             ]
             saveExclusions()
-            DispatchQueue.main.async {
-                self.isInitialLoad = false
-            }
+            self.isInitialLoad = false
             return
         }
         
@@ -56,14 +54,10 @@ class ExclusionModel {
                 let decoded = try await ExclusionModel.readFile(at: fileURL)
                 self.isInitialLoad = true
                 self.excludedApps = decoded
-                DispatchQueue.main.async {
-                    self.isInitialLoad = false
-                }
+                self.isInitialLoad = false
             } catch {
                 print("Error loading exclusions: \(error)")
-                DispatchQueue.main.async {
-                    self.isInitialLoad = false
-                }
+                self.isInitialLoad = false
             }
         }
     }
@@ -71,7 +65,7 @@ class ExclusionModel {
     func saveExclusions() {
         guard let fileURL = getExclusionsFilePath() else { return }
         let currentApps = excludedApps
-        Task.detached(priority: .background) {
+        Task {
             let directoryURL = fileURL.deletingLastPathComponent()
             do {
                 try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
@@ -99,9 +93,7 @@ class ExclusionModel {
     }
     
     private static func readFile(at fileURL: URL) async throws -> [ExcludedApp] {
-        return try await Task.detached(priority: .background) {
-            let data = try Data(contentsOf: fileURL)
-            return try JSONDecoder().decode([ExcludedApp].self, from: data)
-        }.value
+        let data = try Data(contentsOf: fileURL)
+        return try JSONDecoder().decode([ExcludedApp].self, from: data)
     }
 }
