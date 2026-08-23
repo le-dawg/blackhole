@@ -56,34 +56,53 @@ final class AppViewModel {
         ipcClient.stopPollingQueries()
     }
     
-    func setProtection(active: Bool) {
-        self.isDnsActive = active
+    enum AppIntent {
+        case enableProtection
+        case pauseProtection(durationSeconds: Int)
+        case setProtection(active: Bool)
     }
     
-    func pauseProtection(durationSeconds: Int) {
-        Task {
-            do {
-                try await ipcClient.sendPause(durationSeconds: durationSeconds)
-                self.setProtection(active: false)
-            } catch {
-                print("Failed to pause protection: \(error)")
+    private var protectionTask: Task<Void, Never>?
+    private var dnsTask: Task<Void, Never>?
+
+    func process(intent: AppIntent) {
+        switch intent {
+        case .enableProtection:
+            protectionTask?.cancel()
+            protectionTask = Task {
+                do {
+                    try await ipcClient.sendPause(durationSeconds: 0)
+                    if !Task.isCancelled {
+                        self.isDnsActive = true
+                    }
+                } catch {
+                    print("Failed to enable protection: \(error)")
+                }
             }
+        case .pauseProtection(let durationSeconds):
+            protectionTask?.cancel()
+            protectionTask = Task {
+                do {
+                    try await ipcClient.sendPause(durationSeconds: durationSeconds)
+                    if !Task.isCancelled {
+                        self.isDnsActive = false
+                    }
+                } catch {
+                    print("Failed to pause protection: \(error)")
+                }
+            }
+        case .setProtection(let active):
+            self.isDnsActive = active
         }
     }
     
-    func enableProtection() {
-        Task {
-            do {
-                try await ipcClient.sendPause(durationSeconds: 0)
-                self.setProtection(active: true)
-            } catch {
-                print("Failed to enable protection: \(error)")
-            }
-        }
-    }
+    func setProtection(active: Bool) { process(intent: .setProtection(active: active)) }
+    func pauseProtection(durationSeconds: Int) { process(intent: .pauseProtection(durationSeconds: durationSeconds)) }
+    func enableProtection() { process(intent: .enableProtection) }
     
     private func handleDnsStateChange(isActive: Bool) {
-        Task {
+        dnsTask?.cancel()
+        dnsTask = Task {
             if isActive {
                 await setLocalDNS()
             } else {

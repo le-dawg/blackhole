@@ -20,6 +20,7 @@ class ExclusionModel {
     }
     var isInitialLoad: Bool = true
     
+    private var loadTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     
     init() {
@@ -34,6 +35,7 @@ class ExclusionModel {
     }
     
     func loadExclusions() {
+        loadTask?.cancel()
         guard let fileURL = getExclusionsFilePath() else { return }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             // Load default app list
@@ -49,13 +51,15 @@ class ExclusionModel {
             return
         }
         
-        Task {
+        loadTask = Task {
             do {
                 let decoded = try await ExclusionModel.readFile(at: fileURL)
+                if Task.isCancelled { return }
                 self.isInitialLoad = true
                 self.excludedApps = decoded
                 self.isInitialLoad = false
             } catch {
+                if Task.isCancelled { return }
                 print("Error loading exclusions: \(error)")
                 self.isInitialLoad = false
             }
@@ -63,15 +67,17 @@ class ExclusionModel {
     }
     
     func saveExclusions() {
+        saveTask?.cancel()
         guard let fileURL = getExclusionsFilePath() else { return }
         let currentApps = excludedApps
-        Task {
+        saveTask = Task {
             let directoryURL = fileURL.deletingLastPathComponent()
             do {
                 try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true, attributes: nil)
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = .prettyPrinted
                 let data = try encoder.encode(currentApps)
+                if Task.isCancelled { return }
                 try data.write(to: fileURL, options: .atomic)
             } catch {
                 print("Error saving exclusions: \(error)")
