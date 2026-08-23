@@ -7,6 +7,7 @@ enum TransportError: Error {
     case receiveFailed
     case invalidResponse
     case timeout
+    case serverError(Int)
 }
 
 final class StateWrapper: @unchecked Sendable {
@@ -84,6 +85,15 @@ actor UnixSocketTransport {
                             receiveAllData(connection: connection, queue: queue) { result in
                                 switch result {
                                 case .success(let responseData):
+                                    if let statusRange = responseData.range(of: Data("\r\n".utf8)) {
+                                        let statusLine = String(data: responseData.subdata(in: responseData.startIndex..<statusRange.lowerBound), encoding: .utf8) ?? ""
+                                        let components = statusLine.split(separator: " ")
+                                        if components.count >= 2, let statusCode = Int(components[1]), statusCode >= 400 {
+                                            complete(result: .failure(TransportError.serverError(statusCode)))
+                                            return
+                                        }
+                                    }
+                                    
                                     if let range = responseData.range(of: Data("\r\n\r\n".utf8)) {
                                         complete(result: .success(responseData.subdata(in: range.upperBound..<responseData.count)))
                                     } else {
