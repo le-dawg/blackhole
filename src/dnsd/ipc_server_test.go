@@ -2,6 +2,7 @@ package dnsd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -157,6 +158,10 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 	}
 
 	rb := NewRingBuffer(10)
+	rb.Push(QueryRecord{Domain: "blocked.com", Status: "Blocked"})
+	rb.Push(QueryRecord{Domain: "allowed.com", Status: "Allowed"})
+	rb.Push(QueryRecord{Domain: "excluded.com", Status: "Excluded"})
+
 	st := NewGlobalStats()
 	srv, err := StartIPCServer(listener, rb, st)
 	if err != nil {
@@ -180,5 +185,43 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405 Method Not Allowed, got %d", resp.StatusCode)
+	}
+
+	resp2, err := client.Get("http://dummy/queries")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", resp2.StatusCode)
+	}
+
+	if ct := resp2.Header.Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("expected Content-Type application/x-ndjson, got %s", ct)
+	}
+
+	decoder := json.NewDecoder(resp2.Body)
+	var records []QueryRecord
+	for {
+		var rec QueryRecord
+		if err := decoder.Decode(&rec); err != nil {
+			if err.Error() == "EOF" {
+				break
+			}
+			t.Fatalf("failed to decode: %v", err)
+		}
+		records = append(records, rec)
+	}
+
+	if len(records) != 3 {
+		t.Fatalf("expected 3 records, got %d", len(records))
+	}
+
+	expectedStatuses := []string{"Blocked", "Allowed", "Excluded"}
+	for i, st := range expectedStatuses {
+		if records[i].Status != st {
+			t.Errorf("record %d: expected status %s, got %s", i, st, records[i].Status)
+		}
 	}
 }
