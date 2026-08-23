@@ -276,6 +276,9 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	multiReader := io.MultiReader(readers...)
 	scanner := bufio.NewScanner(multiReader)
 	newRoot := BuildTrieFromScanner(scanner)
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed scanning gravity lists: %w", err)
+	}
 	r.UpdateRoot(newRoot)
-	return scanner.Err()
+	return nil
 }

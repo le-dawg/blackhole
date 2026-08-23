@@ -1,12 +1,14 @@
 package dnsd
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +22,7 @@ func TestGravitySync(t *testing.T) {
 	DefaultLists = []string{server.URL} // Override for test
 
 	res := NewFilterEngine(nil)
-	
+
 	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +31,7 @@ func TestGravitySync(t *testing.T) {
 	if !res.Resolve("ads.test.com") {
 		t.Error("ads.test.com should be blocked after gravity sync")
 	}
-	
+
 	if _, err := os.Stat(filepath.Join(dir, "gravity-0.cache")); os.IsNotExist(err) {
 		t.Error("gravity.cache should have been created")
 	}
@@ -70,7 +72,7 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 
 	dir := t.TempDir()
 	DefaultLists = []string{srv200.URL, srv304.URL} // Override for test
-	
+
 	// Create a dummy cache file for the 304 server so it has something to read
 	cache304Path := filepath.Join(dir, "gravity-1.cache")
 	if err := os.WriteFile(cache304Path, []byte("domain304.com\n"), 0644); err != nil {
@@ -84,12 +86,12 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 	})
 
 	res := NewFilterEngine(nil)
-	
+
 	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatalf("Expected successful update, got error: %v", err)
 	}
-	
+
 	if !res.Resolve("domain200.com") {
 		t.Error("domain200.com should be blocked from the 200 response")
 	}
@@ -130,7 +132,7 @@ func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 	if !customParser.executed {
 		t.Error("Expected custom parser to be executed, but it was bypassed")
 	}
-	
+
 	if !res.Resolve("custom-parsed-domain.com") {
 		t.Error("Expected domain from custom parser to be blocked")
 	}
@@ -144,7 +146,7 @@ func TestRegisterParserForURL_LongestPrefixMatch(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
-	
+
 	// Setup a URL that matches both prefixes but has a longer matching prefix
 	listURL := server.URL + "/list/gravity.txt"
 	DefaultLists = []string{listURL}
@@ -188,7 +190,7 @@ func TestStartGravitySync_Lifecycle(t *testing.T) {
 	defer server.Close()
 
 	DefaultLists = []string{server.URL}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -200,7 +202,7 @@ func TestStartGravitySync_Lifecycle(t *testing.T) {
 	if !res.Resolve("ads.test.com") {
 		t.Error("ads.test.com should be blocked")
 	}
-	
+
 	cancel()
 }
 
@@ -216,5 +218,54 @@ func TestRefreshGravity_MalformedURL(t *testing.T) {
 	}
 	if err.Error() != "no gravity lists available" {
 		t.Errorf("Expected 'no gravity lists available', got %v", err)
+	}
+}
+
+// 5. Test scanner error does not corrupt existing trie
+type badParser struct {
+	domain string
+}
+
+func (b *badParser) Parse(r io.Reader, onDomain func(string)) error {
+	onDomain(b.domain)
+	return nil
+}
+
+func TestRefreshGravity_ScannerErrorDoesNotCorruptTrie(t *testing.T) {
+	dir := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("dummy data"))
+	}))
+	defer server.Close()
+
+	DefaultLists = []string{server.URL}
+
+	// Initialize FilterEngine with an existing rule
+	res := NewFilterEngine(nil)
+	scanner := bufio.NewScanner(strings.NewReader("existing-domain.com\n"))
+	existingTrie := BuildTrieFromScanner(scanner)
+	res.UpdateRoot(existingTrie)
+
+	if !res.Resolve("existing-domain.com") {
+		t.Fatal("existing-domain.com should be blocked initially")
+	}
+
+	// Inject a parser that returns a domain string longer than bufio.MaxScanTokenSize (65536)
+	longDomain := ""
+	for i := 0; i < 65536+10; i++ {
+		longDomain += "a"
+	}
+	longDomain += ".com"
+
+	RegisterParserForURL(server.URL, &badParser{domain: longDomain})
+
+	err := refreshGravity(context.Background(), dir, res)
+	if err == nil {
+		t.Fatal("Expected error due to scanner failure, got nil")
+	}
+
+	// Verify existing rule is still active
+	if !res.Resolve("existing-domain.com") {
+		t.Error("existing-domain.com should still be blocked; trie was corrupted!")
 	}
 }
