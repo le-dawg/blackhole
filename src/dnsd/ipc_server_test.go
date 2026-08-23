@@ -249,3 +249,65 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 		}
 	}
 }
+func TestIPCServer_PauseOverlappingGenerationRace(t *testing.T) {
+	listener := &MockIPCListener{
+		connCh: make(chan net.Conn, 10),
+	}
+	rb := NewRingBuffer(10)
+	st := NewGlobalStats()
+	srv, err := StartIPCServer(listener, rb, st)
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+	defer srv.Shutdown(context.Background())
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				clientConn, serverConn := net.Pipe()
+				listener.connCh <- serverConn
+				return clientConn, nil
+			},
+		},
+	}
+
+	// Wait helper
+	wait := func(d time.Duration) { time.Sleep(d) }
+
+	// Send POST /pause with durationSeconds: 1
+	resp, err := client.Post("http://dummy/pause", "application/json", strings.NewReader(`{"durationSeconds": 1}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if !IsPaused() {
+		t.Fatalf("expected paused to be true")
+	}
+
+	// Wait 100ms and send POST /pause with durationSeconds: 3
+	wait(100 * time.Millisecond)
+	resp, err = client.Post("http://dummy/pause", "application/json", strings.NewReader(`{"durationSeconds": 3}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if !IsPaused() {
+		t.Fatalf("expected paused to be true")
+	}
+
+	// Wait 1.1s (past the initial 1s timer expiration)
+	wait(1100 * time.Millisecond)
+	if !IsPaused() {
+		t.Fatalf("expected paused to be true after 1.2s total (proving first timer did not unpause)")
+	}
+
+	// Send POST /pause with durationSeconds: 0
+	resp, err = client.Post("http://dummy/pause", "application/json", strings.NewReader(`{"durationSeconds": 0}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+	if IsPaused() {
+		t.Fatalf("expected paused to be false")
+	}
+}

@@ -92,9 +92,10 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 }
 
 var (
-	pauseFlag  int32
-	pauseMutex sync.Mutex
-	pauseTimer *time.Timer
+	pauseFlag       int32
+	pauseMutex      sync.Mutex
+	pauseTimer      *time.Timer
+	pauseGeneration uint64
 )
 
 func IsPaused() bool {
@@ -145,15 +146,22 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 		}
 
 		pauseMutex.Lock()
+		pauseGeneration++
+		currentGen := pauseGeneration
 		if pauseTimer != nil {
 			pauseTimer.Stop()
+			pauseTimer = nil
 		}
 		if req.DurationSeconds <= 0 {
 			atomic.StoreInt32(&pauseFlag, 0)
 		} else {
 			atomic.StoreInt32(&pauseFlag, 1)
 			pauseTimer = time.AfterFunc(time.Duration(req.DurationSeconds)*time.Second, func() {
-				atomic.StoreInt32(&pauseFlag, 0)
+				pauseMutex.Lock()
+				defer pauseMutex.Unlock()
+				if pauseGeneration == currentGen {
+					atomic.StoreInt32(&pauseFlag, 0)
+				}
 			})
 		}
 		pauseMutex.Unlock()
