@@ -60,7 +60,7 @@ type ListParser interface {
 }
 ```
 
-Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. Instead of modifying `gravity.go` directly, you can inject a custom parser at runtime using the `SetParser` API. Create your own parser struct that implements the `ListParser` interface and pass it to your gravity or blocklist instance:
+Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. Instead of modifying `gravity.go` directly, you can inject a custom parser at runtime using the `RegisterParserForURL` API. Create your own parser struct that implements the `ListParser` interface and pass it to your gravity or blocklist instance:
 
 ```go
 // Define your custom parser
@@ -73,7 +73,7 @@ func (p MyParser) Parse(r io.Reader, onDomain func(string)) error {
 }
 
 // Inject it using the API
-dnsd.SetParser(MyParser{})
+dnsd.RegisterParserForURL("https://example.com/list", MyParser{})
 ```
 
 ## IPC API
