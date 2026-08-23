@@ -38,58 +38,52 @@ func getConsoleUID() uint32 {
 }
 
 func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
-	conn, err := l.UnixListener.Accept()
-	if err != nil {
-		return nil, err
-	}
-
-	unixConn, ok := conn.(*net.UnixConn)
-	if !ok {
-		conn.Close()
-		return nil, errors.New("not a unix connection")
-	}
-
-	raw, err := unixConn.SyscallConn()
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	var authErr error
-	err = raw.Control(func(fd uintptr) {
-		cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
+	for {
+		conn, err := l.UnixListener.Accept()
 		if err != nil {
-			authErr = err
-			return
+			return nil, err
 		}
 
-		allowed := false
-		for _, uid := range l.AllowedUIDs {
-			if cred.Uid == uid {
-				allowed = true
-				break
+		unixConn, ok := conn.(*net.UnixConn)
+		if !ok {
+			conn.Close()
+			continue
+		}
+
+		raw, err := unixConn.SyscallConn()
+		if err != nil {
+			conn.Close()
+			continue
+		}
+
+		var authErr error
+		err = raw.Control(func(fd uintptr) {
+			cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
+			if err != nil {
+				authErr = err
+				return
 			}
+
+			allowed := false
+			for _, uid := range l.AllowedUIDs {
+				if cred.Uid == uid {
+					allowed = true
+					break
+				}
+			}
+
+			if !allowed {
+				authErr = ErrUnauthorizedUID
+			}
+		})
+
+		if err != nil || authErr != nil {
+			conn.Close()
+			continue
 		}
 
-		if !allowed {
-			authErr = ErrUnauthorizedUID
-		}
-	})
-
-	if err != nil {
-		conn.Close()
-		return nil, ErrUnauthorizedIPC
+		return conn, nil
 	}
-
-	if authErr != nil {
-		conn.Close()
-		if errors.Is(authErr, ErrUnauthorizedUID) {
-			return nil, authErr
-		}
-		return nil, ErrUnauthorizedIPC
-	}
-
-	return conn, nil
 }
 
 var (

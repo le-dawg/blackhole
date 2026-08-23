@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -126,12 +125,14 @@ func TestIPCServer_PauseEndpoint(t *testing.T) {
 
 func TestIPCServer_PeerCredRejection(t *testing.T) {
 	// 1. Success case: Allowed UID
-	tmpFile1 := filepath.Join(t.TempDir(), "ipc_test1.sock")
+	tmpFile1 := "/tmp/ipc_test1_go_sentinel.sock"
+	os.Remove(tmpFile1)
 	l1, err := net.Listen("unix", tmpFile1)
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
 	defer l1.Close()
+	defer os.Remove(tmpFile1)
 
 	authListener1 := &AuthenticatedUnixListener{
 		UnixListener: l1.(*net.UnixListener),
@@ -164,11 +165,14 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 	}
 
 	// 2. Failure case: Rejected UID
-	tmpFile2 := filepath.Join(t.TempDir(), "ipc_test2.sock")
+	tmpFile2 := "/tmp/ipc_test2_go_sentinel.sock"
+	os.Remove(tmpFile2)
 	l2, err := net.Listen("unix", tmpFile2)
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
+	defer l2.Close()
+	defer os.Remove(tmpFile2)
 	
 	authListener2 := &AuthenticatedUnixListener{
 		UnixListener: l2.(*net.UnixListener),
