@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,18 +21,7 @@ func IsPaused() bool {
 	return atomic.LoadInt32(&pauseFlag) == 1
 }
 
-func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.Server, error) {
-	os.Remove(sockPath)
-	
-	listener, err := net.Listen("unix", sockPath)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Must be 0666 so unprivileged GUI app can connect
-	if err := os.Chmod(sockPath, 0666); err != nil {
-		log.Printf("Warning: failed to chmod socket: %v", err)
-	}
+func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (*http.Server, error) {
 
 	mux := http.NewServeMux()
 	
