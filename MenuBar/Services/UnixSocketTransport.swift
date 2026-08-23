@@ -92,13 +92,25 @@ actor UnixSocketTransport {
                                         return
                                     }
                                     
-                                    if let statusRange = responseData.range(of: Data("\r\n".utf8)) {
-                                        let statusLine = String(data: responseData.subdata(in: responseData.startIndex..<statusRange.lowerBound), encoding: .utf8) ?? ""
-                                        let components = statusLine.split(separator: " ")
-                                        if components.count >= 2, let statusCode = Int(components[1]), statusCode >= 400 {
-                                            complete(result: .failure(TransportError.serverError(statusCode)))
-                                            return
-                                        }
+                                    guard let statusRange = responseData.range(of: Data("\r\n".utf8)) else {
+                                        complete(result: .failure(TransportError.invalidResponse))
+                                        connection.cancel()
+                                        return
+                                    }
+                                    
+                                    let statusLine = String(data: responseData.subdata(in: responseData.startIndex..<statusRange.lowerBound), encoding: .utf8) ?? ""
+                                    let components = statusLine.split(separator: " ")
+                                    
+                                    guard components.count >= 2, let statusCode = Int(components[1]) else {
+                                        complete(result: .failure(TransportError.invalidResponse))
+                                        connection.cancel()
+                                        return
+                                    }
+                                    
+                                    if statusCode >= 400 {
+                                        complete(result: .failure(TransportError.serverError(statusCode)))
+                                        connection.cancel()
+                                        return
                                     }
                                     
                                     if let range = responseData.range(of: Data("\r\n\r\n".utf8)) {
