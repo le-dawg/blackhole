@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct InspectorView: View {
-    @ObservedObject var ipc: IPCClient
+    var viewModel: AppViewModel
     
     var body: some View {
         LazyVStack {
-            ForEach(ipc.queries) { query in
+            ForEach(viewModel.queries) { query in
                 HStack {
                     Circle().fill(query.status == "Blocked" ? Color.red : (query.status == "Excluded" ? Color.gray : Color.green))
                         .frame(width: 8, height: 8)
@@ -20,7 +20,7 @@ struct InspectorView: View {
                 .padding(.vertical, 4)
             }
         }
-        .onAppear { ipc.startPollingQueries() }
-        .onDisappear { ipc.stopPollingQueries() }
+        .onAppear { viewModel.startPollingQueries() }
+        .onDisappear { viewModel.stopPollingQueries() }
     }
 }
