@@ -60,7 +60,20 @@ type ListParser interface {
 }
 ```
 
-Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. You can then swap out `PiHoleParser` in `gravity.go` with your custom parser implementation.
+Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. Instead of modifying `gravity.go` directly, you can inject a custom parser at runtime using the `SetParser` API. Create your own parser struct that implements the `BlocklistParser` interface and pass it to your gravity or blocklist instance:
+
+```go
+// Define your custom parser
+type MyParser struct {}
+
+func (p MyParser) Parse(data []byte) ([]string, error) {
+    // Custom parsing logic here
+    return []string{}, nil
+}
+
+// Inject it using the API
+gravityInstance.SetParser(MyParser{})
+```
 
 ## IPC API
 

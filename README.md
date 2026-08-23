@@ -46,3 +46,35 @@ make install
 ## Usage
 
 Once installed, the `blackholed` daemon runs in the background. You can interact with the system using the `blackhole` CLI tool.
+
+## IPC Endpoints
+
+The service exposes the following Inter-Process Communication (IPC) endpoints for control and monitoring:
+
+### Pause Service
+`POST /pause`
+
+Temporarily pauses the service or specific subsystems for a given duration.
+
+**Request Payload (JSON):**
+```json
+{
+  "duration": "300s" 
+}
+```
+*(Duration can be specified in seconds `s`, minutes `m`, or hours `h`)*
+
+### Get Statistics
+`GET /stats`
+
+Retrieves current operational metrics and statistics.
+
+**Response Payload (JSON):**
+```json
+{
+  "status": "active",
+  "domains_blocked": 10452,
+  "queries_processed": 54210,
+  "uptime_seconds": 86400
+}
+```
