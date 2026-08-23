@@ -22,6 +22,9 @@ final class IPCClient: IPCClientProtocol {
     private var statsTimer: AnyCancellable?
     private var queriesTimer: AnyCancellable?
     
+    private var fetchStatsTask: Task<Void, Never>?
+    private var fetchQueriesTask: Task<Void, Never>?
+    
     private let socketPath = "/var/run/blackhole.sock"
     
     func startPollingStats() {
@@ -31,7 +34,7 @@ final class IPCClient: IPCClientProtocol {
         fetchStats()
     }
     
-    func stopPollingStats() { statsTimer?.cancel(); statsTimer = nil }
+    func stopPollingStats() { statsTimer?.cancel(); statsTimer = nil; fetchStatsTask?.cancel() }
     
     func startPollingQueries() {
         queriesTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect().sink { [weak self] _ in
@@ -40,12 +43,14 @@ final class IPCClient: IPCClientProtocol {
         fetchQueries()
     }
     
-    func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
+    func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil; fetchQueriesTask?.cancel() }
     
     private func fetchStats() {
-        Task {
+        fetchStatsTask?.cancel()
+        fetchStatsTask = Task {
             do {
                 let data = try await UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/stats")
+                if Task.isCancelled { return }
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let stats = try decoder.decode(StatsResponse.self, from: data)
@@ -57,12 +62,15 @@ final class IPCClient: IPCClientProtocol {
     }
     
     private func fetchQueries() {
-        Task {
+        fetchQueriesTask?.cancel()
+        fetchQueriesTask = Task {
             do {
                 let data = try await UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/queries")
+                if Task.isCancelled { return }
                 guard let str = String(data: data, encoding: .utf8) else { return }
                 
                 let lines = str.split(separator: "\n")
+                if Task.isCancelled { return }
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 var parsed: [QueryRecord] = []
