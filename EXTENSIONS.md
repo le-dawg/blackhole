@@ -112,10 +112,16 @@ Returns a stream of recent DNS query logs.
 
 This endpoint returns a newline-delimited JSON stream where each line is a `QueryRecord` object.
 
+The daemon emits the following status values:
+- `Allowed`: Normal DNS resolution via configured upstreams.
+- `Blocked`: Domain blocked and sinkholed to `0.0.0.0`.
+- `Excluded`: Query allowed via app-specific bypass rule (process name or bundle ID).
+
 **Example Response Payload (Stream):**
 ```json
 {"timestamp":"2026-08-23T22:11:51Z","domain":"ads.example.com","queryType":1,"status":"Blocked","processName":"Safari","bundleId":"com.apple.Safari","latencyMs":1.5}
 {"timestamp":"2026-08-23T22:11:52Z","domain":"example.com","queryType":28,"status":"Allowed","processName":"Chrome","bundleId":"com.google.Chrome","latencyMs":12.1}
+{"timestamp":"2026-08-23T22:11:53Z","domain":"tracking.slack.com","queryType":1,"status":"Excluded","processName":"Slack","bundleId":"com.tinyspeck.slackmacgap","latencyMs":2.4}
 ```
 
 ### `POST /pause`
