@@ -83,7 +83,7 @@ Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC), de
 **Important Note:** The daemon uses REST/HTTP over a Unix socket, typically located at `/var/run/blackhole.sock` (NOT `/tmp/` and NOT JSON-RPC).
 
 ### Capabilities:
-- **Telemetry and Metrics (`/stats`, `/queries`):** Return recent DNS query logs (JSON snapshot), latency metrics, and block rates.
+- **Telemetry and Metrics (`/stats`, `/queries`):** Return recent DNS query logs (newline-delimited JSON `application/x-ndjson`), latency metrics, and block rates.
 - **State Management (`/pause`):** Pause or resume filtering dynamically.
 
 To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackhole.sock`) and send HTTP payloads as defined in the IPC handlers.
