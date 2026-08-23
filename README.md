@@ -13,7 +13,7 @@ Blackhole is fundamentally built as an ultra-low-latency DNS forwarder augmented
 
 1. **DNS Cache & FilterEngine (`dns_cache.go`, `gravity.go`)**
    The heart of Blackhole is an optimized concurrent trie and local DNS cache that avoids heap allocations on the hot path. The `FilterEngine` efficiently evaluates domains against millions of blocklist entries.
-   - **Multi-Reader Gravity:** Blocklists are downloaded serially, cached per-source, and merged via `io.MultiReader` and compiled into an atomic state file to prevent single-source failure regressions.
+   - **Multi-Reader Gravity:** Blocklists are downloaded serially, cached per-source, merged via io.MultiReader, and swapped into an in-memory trie atomically to prevent single-source failure regressions.
 2. **Dynamic Extension Chain (`forwarder.go`, `daemon.go`)**
    Traffic traverses a highly extensible `FilterChain`. Extensions and custom filters can register themselves using `RegisterFilter()`, enabling enterprise proxying and advanced metrics gathering without fork-bombing the core logic.
 3. **IPC Interop (`ipc_server.go`)**
@@ -54,7 +54,7 @@ The service exposes the following Inter-Process Communication (IPC) endpoints fo
 ### Pause Service
 `POST /pause`
 
-Temporarily pauses the service or specific subsystems for a given duration.
+Temporarily pauses DNS blocking protection for a given duration (all queries pass through to upstream resolvers while paused).
 
 **Error Codes:**
 - `405 Method Not Allowed`: If called with any HTTP method other than `POST`.
