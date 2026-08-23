@@ -130,27 +130,22 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 		AllowedUIDs:  []uint32{999999999}, // Assumes this UID does not match the test runner
 	}
 
-	rb := NewRingBuffer(10)
-	st := NewGlobalStats()
-	// Start IPC Server directly with the authenticated listener
-	srv, err := StartIPCServer(authListener, rb, st)
-	if err != nil {
-		t.Fatalf("failed to start: %v", err)
-	}
-	defer srv.Shutdown(context.Background())
+	// Connect to the socket in the background to trigger Accept()
+	go func() {
+		conn, err := net.Dial("unix", tmpFile)
+		if err == nil {
+			conn.Close()
+		}
+	}()
 
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", tmpFile)
-			},
-		},
-	}
-
-	// This request should fail at the transport level because the connection is closed
-	// upon failing the peer credential check in Accept().
-	_, err = client.Get("http://dummy/stats")
+	// Accept the connection, which should fail due to peer-credential rejection
+	_, err = authListener.Accept()
 	if err == nil {
-		t.Errorf("expected request to fail due to unauthorized UID rejection, but it succeeded")
+		t.Fatalf("expected Accept to fail due to unauthorized UID rejection, but it succeeded")
+	}
+
+	// Explicitly prove the peer-credential auth branch fired
+	if err.Error() != "unauthorized ipc access" {
+		t.Errorf("expected error \"unauthorized ipc access\", got: %v", err)
 	}
 }

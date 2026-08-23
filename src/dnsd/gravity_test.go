@@ -118,10 +118,7 @@ func TestSetParser_CustomParserExecution(t *testing.T) {
 	DefaultLists = []string{server.URL} // Override for test
 
 	customParser := &mockParser{}
-	originalParser := activeParser
-	defer SetParser(originalParser)
-
-	SetParser(customParser)
+	RegisterParserForURL(server.URL, customParser)
 
 	res := NewFilterEngine(nil)
 	err := refreshGravity(dir, res)

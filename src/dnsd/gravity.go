@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -26,15 +27,15 @@ type GravityState struct {
 }
 
 var (
-	parserMu     sync.RWMutex
-	activeParser ListParser = &PiHoleParser{}
+	parserMu   sync.RWMutex
+	parsersMap = make(map[string]ListParser)
 )
 
-// SetParser allows users to inject a custom parser implementation globally.
-func SetParser(p ListParser) {
+// RegisterParserForURL allows users to inject a custom parser implementation for a specific URL prefix.
+func RegisterParserForURL(urlPrefix string, p ListParser) {
 	if p != nil {
 		parserMu.Lock()
-		activeParser = p
+		parsersMap[urlPrefix] = p
 		parserMu.Unlock()
 	}
 }
@@ -164,7 +165,13 @@ func refreshGravity(dir string, r *FilterEngine) error {
 
 		writer := bufio.NewWriter(f)
 		parserMu.RLock()
-		parser := activeParser
+		var parser ListParser = &PiHoleParser{}
+		for prefix, p := range parsersMap {
+			if strings.HasPrefix(url, prefix) {
+				parser = p
+				break
+			}
+		}
 		parserMu.RUnlock()
 
 		var writeErr error
