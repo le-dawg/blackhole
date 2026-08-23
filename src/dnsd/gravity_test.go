@@ -97,7 +97,7 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 	}
 }
 
-// 3. Test injecting a custom parser via SetParser() and ensure execution
+// 3. Test injecting a custom parser via RegisterParserForURL() and ensure execution
 type mockParser struct {
 	executed bool
 }
@@ -132,5 +132,39 @@ func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 	
 	if !res.Resolve("custom-parsed-domain.com") {
 		t.Error("Expected domain from custom parser to be blocked")
+	}
+}
+
+// 4. Test longest-prefix match precedence for custom parsers
+func TestRegisterParserForURL_LongestPrefixMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("dummy data"))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	
+	// Setup a URL that matches both prefixes but has a longer matching prefix
+	listURL := server.URL + "/list/gravity.txt"
+	DefaultLists = []string{listURL}
+
+	shortParser := &mockParser{}
+	longParser := &mockParser{}
+
+	// Register both parsers; mathematically the longest prefix should win
+	RegisterParserForURL(server.URL+"/", shortParser)
+	RegisterParserForURL(server.URL+"/list/", longParser)
+
+	res := NewFilterEngine(nil)
+	err := refreshGravity(dir, res)
+	if err != nil {
+		t.Fatalf("Unexpected error during parsing: %v", err)
+	}
+
+	if shortParser.executed {
+		t.Error("Expected short prefix parser to NOT be executed")
+	}
+	if !longParser.executed {
+		t.Error("Expected long prefix parser to be executed (longest prefix wins)")
 	}
 }
