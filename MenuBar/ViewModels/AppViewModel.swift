@@ -5,11 +5,7 @@ import Observation
 
 @Observable @MainActor
 final class AppViewModel {
-    var isDnsActive: Bool = false {
-        didSet {
-            handleDnsStateChange(isActive: isDnsActive)
-        }
-    }
+    private(set) var isDnsActive: Bool = false
     
     var isMenuPresented: Bool = false
     
@@ -74,6 +70,7 @@ final class AppViewModel {
                     try await ipcClient.sendPause(durationSeconds: 0)
                     if !Task.isCancelled {
                         self.isDnsActive = true
+                        self.handleDnsStateChange(isActive: true)
                     }
                 } catch {
                     print("Failed to enable protection: \(error)")
@@ -86,6 +83,7 @@ final class AppViewModel {
                     try await ipcClient.sendPause(durationSeconds: durationSeconds)
                     if !Task.isCancelled {
                         self.isDnsActive = false
+                        self.handleDnsStateChange(isActive: false)
                     }
                 } catch {
                     print("Failed to pause protection: \(error)")
@@ -93,6 +91,7 @@ final class AppViewModel {
             }
         case .setProtection(let active):
             self.isDnsActive = active
+            self.handleDnsStateChange(isActive: active)
         }
     }
     
