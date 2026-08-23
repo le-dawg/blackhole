@@ -15,7 +15,7 @@ final class IPCClient: ObservableObject {
     
     // macOS 13+ supports unix domain sockets natively via URLSession if configured properly, or we can use a custom protocol.
     // For simplicity, we assume a custom unix socket URL.
-    // Actually, Apple added `URLSession.shared.data(from: URL(fileURLWithPath: "/tmp/blackhole.sock"))`? No, you need a custom stream.
+    // Actually, Apple added `URLSession.shared.data(from: URL(fileURLWithPath: "/var/run/blackhole.sock"))`? No, you need a custom stream.
     // Let's use a simpler approach: curl via Process! It's perfectly fine for a macOS menu bar app.
     
     func startPollingStats() {
@@ -40,7 +40,7 @@ final class IPCClient: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/stats", "-s"]
+            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "http://localhost/stats", "-s"]
             let pipe = Pipe()
             task.standardOutput = pipe
             try? task.run()
@@ -59,7 +59,7 @@ final class IPCClient: ObservableObject {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "http://localhost/queries", "-s"]
+            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "http://localhost/queries", "-s"]
             let pipe = Pipe()
             task.standardOutput = pipe
             try? task.run()
@@ -87,7 +87,7 @@ final class IPCClient: ObservableObject {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let task = Process()
             task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/tmp/blackhole.sock", "-X", "POST", "-d", "{\"durationSeconds\": \(durationSeconds)}", "http://localhost/pause", "-s", "-f"]
+            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "-X", "POST", "-d", "{\"durationSeconds\": \(durationSeconds)}", "http://localhost/pause", "-s", "-f"]
             task.terminationHandler = { t in
                 if t.terminationStatus == 0 {
                     continuation.resume(returning: ())

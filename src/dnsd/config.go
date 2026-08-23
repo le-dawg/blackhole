@@ -22,6 +22,6 @@ func DefaultConfig() Config {
 		Port:           5353,
 		DataDir:        dataDir,
 		ExclusionsPath: filepath.Join(dataDir, "exclusions.json"),
-		SocketPath:     "/tmp/blackhole.sock",
+		SocketPath:     "/var/run/blackhole.sock",
 	}
 }

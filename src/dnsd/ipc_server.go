@@ -59,7 +59,7 @@ func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.
 		var req struct {
 			DurationSeconds int `json:"durationSeconds"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DurationSeconds <= 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
@@ -68,10 +68,14 @@ func StartIPCServer(sockPath string, rb *RingBuffer, stats *GlobalStats) (*http.
 		if pauseTimer != nil {
 			pauseTimer.Stop()
 		}
-		atomic.StoreInt32(&pauseFlag, 1)
-		pauseTimer = time.AfterFunc(time.Duration(req.DurationSeconds)*time.Second, func() {
+		if req.DurationSeconds <= 0 {
 			atomic.StoreInt32(&pauseFlag, 0)
-		})
+		} else {
+			atomic.StoreInt32(&pauseFlag, 1)
+			pauseTimer = time.AfterFunc(time.Duration(req.DurationSeconds)*time.Second, func() {
+				atomic.StoreInt32(&pauseFlag, 0)
+			})
+		}
 		pauseMutex.Unlock()
 		
 		w.Header().Set("Content-Type", "application/json")
