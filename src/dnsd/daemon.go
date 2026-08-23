@@ -169,13 +169,23 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 		// FIXED: Append GetFilters() to the chain so registered extensions actually run.
 		chain = append(FilterChain{r}, GetFilters()...)
 		
-		if r.Resolve(domain) {
+		// Evaluate the full FilterChain *before* recording stats
+		respRaw, block, err := chain.Process(payload)
+		if block || err != nil {
 			status = "Blocked"
-			log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
+			if err != nil {
+				log.Printf("BLOCKED (error) domain='%s' client=%s err=%v", domain, cliAddr.String(), err)
+			} else {
+				log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
+			}
+			if respRaw != nil {
+				_, _ = conn.WriteToUDP(respRaw, cliAddr)
+			}
 		} else {
 			status = "Allowed"
+			// Pass a nil chain because filters have already been applied
+			d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
 		}
-		d.forwardQuery(payload, cliAddr, conn, msg, domain, chain)
 	}
 
 	latencyMs := float64(time.Since(startTime).Microseconds()) / 1000.0

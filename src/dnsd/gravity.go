@@ -112,20 +112,63 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		tempCache := cachePath + ".tmp"
 		f, err := os.Create(tempCache)
 		if err != nil {
+			log.Printf("Failed to create temp cache %s: %v", tempCache, err)
 			resp.Body.Close()
+			if fRead, err := os.Open(cachePath); err == nil {
+				readers = append(readers, fRead)
+				filesToClose = append(filesToClose, fRead)
+			}
 			continue
 		}
 
 		writer := bufio.NewWriter(f)
 		parser := &PiHoleParser{}
-		parser.Parse(resp.Body, func(domain string) {
-			writer.WriteString(domain + "\n")
+		
+		var writeErr error
+		parseErr := parser.Parse(resp.Body, func(domain string) {
+			if writeErr == nil {
+				if _, err := writer.WriteString(domain + "
+"); err != nil {
+					writeErr = err
+				}
+			}
 		})
-		writer.Flush()
-		f.Close()
+		
+		if writeErr == nil && parseErr != nil {
+			writeErr = parseErr
+		}
+		
+		if writeErr == nil {
+			if err := writer.Flush(); err != nil {
+				writeErr = err
+			}
+		}
+		
+		if err := f.Close(); err != nil && writeErr == nil {
+			writeErr = err
+		}
+		
 		resp.Body.Close()
 
-		os.Rename(tempCache, cachePath)
+		if writeErr != nil {
+			log.Printf("Error processing blocklist %s: %v", url, writeErr)
+			os.Remove(tempCache)
+			if fRead, err := os.Open(cachePath); err == nil {
+				readers = append(readers, fRead)
+				filesToClose = append(filesToClose, fRead)
+			}
+			continue
+		}
+
+		if err := os.Rename(tempCache, cachePath); err != nil {
+			log.Printf("Failed to rename temp cache for %s: %v", url, err)
+			os.Remove(tempCache)
+			if fRead, err := os.Open(cachePath); err == nil {
+				readers = append(readers, fRead)
+				filesToClose = append(filesToClose, fRead)
+			}
+			continue
+		}
 
 		stateMap[url] = GravityState{
 			ETag:         resp.Header.Get("ETag"),
