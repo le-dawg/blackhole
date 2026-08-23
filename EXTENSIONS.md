@@ -98,7 +98,7 @@ Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
 | `blocked` | Integer | Total number of queries blocked/sinkholed over the rolling 24-hour window |
 | `blockPercent` | Float | Percentage of queries blocked (`(blocked / total) * 100.0`) |
 | `topDomains` | Object | Map of top 5 most frequently blocked domains to block counts over the rolling 24-hour window |
-| `topApps` | Object | Map of top 5 client executable binary paths (e.g. "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome") generating the most blocked queries to blocked counts over the rolling 24-hour window |
+| `topApps` | Object | Map of top 5 client executable binary paths (with any matched CLI pattern tags appended, e.g. "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" or "/usr/bin/python3-litellm") generating the most blocked queries to blocked counts over the rolling 24-hour window |
 | `windowStart` | String | RFC3339 timestamp marking the start of the hourly-bucketed 24-hour aggregation window (`now.Add(-24h).Truncate(1h)`) |
 
 **Example Response:**
@@ -140,7 +140,7 @@ This endpoint returns a newline-delimited JSON stream where each line is a `Quer
 | `domain` | String | The requested domain name |
 | `queryType` | Integer | DNS query type (e.g., 1 for A, 28 for AAAA) |
 | `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`) |
-| `processName` | String | Client process binary/executable path resolved via proc_pidpath (e.g. "/Applications/Safari.app/Contents/MacOS/Safari"), or "Unknown" if resolution was dropped or unavailable |
+| `processName` | String | Client process executable binary path (resolved via proc_pidpath, and appended with "-[pattern]" when matched against a configured CLI pattern tag, e.g. "/Applications/Safari.app/Contents/MacOS/Safari" or "/usr/bin/python3-litellm"), or "Unknown" if resolution was dropped or unavailable |
 | `bundleId` | String | Bundle identifier of the app making the query |
 | `latencyMs` | Float | Resolution latency in milliseconds |
 
