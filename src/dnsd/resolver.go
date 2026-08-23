@@ -3,6 +3,7 @@ package dnsd
 import (
 	"bufio"
 	"strings"
+	"golang.org/x/net/dns/dnsmessage"
 	"sync/atomic"
 )
 
@@ -218,4 +219,53 @@ func (e *FilterEngine) AddBlockedDomain(domain string) {
 		node.isEnd = true
 		node.children = nil
 	}
+}
+
+func (e *FilterEngine) Process(req []byte) (resp []byte, block bool, err error) {
+	var msg dnsmessage.Message
+	if err := msg.Unpack(req); err != nil {
+		return nil, false, err
+	}
+	if len(msg.Questions) == 0 {
+		return nil, false, nil
+	}
+
+	domain := msg.Questions[0].Name.String()
+	if len(domain) > 1 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
+	if e.Resolve(domain) {
+		msg.Header.Response = true
+		msg.Header.RCode = dnsmessage.RCodeSuccess
+		msg.Answers = nil
+		for _, q := range msg.Questions {
+			switch q.Type {
+			case dnsmessage.TypeA:
+				msg.Answers = append(msg.Answers, dnsmessage.Resource{
+					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 3600},
+					Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+				})
+			case dnsmessage.TypeAAAA:
+				msg.Answers = append(msg.Answers, dnsmessage.Resource{
+					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 3600},
+					Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+				})
+			case dnsmessage.Type(65), dnsmessage.Type(64):
+				// HTTPS, SVCB (left empty in sendBlockedResponse)
+			case dnsmessage.TypeALL:
+				msg.Answers = append(msg.Answers, dnsmessage.Resource{
+					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 3600},
+					Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+				})
+				msg.Answers = append(msg.Answers, dnsmessage.Resource{
+					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 3600},
+					Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+				})
+			}
+		}
+		resp, err = msg.Pack()
+		return resp, true, err
+	}
+	return nil, false, nil
 }
