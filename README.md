@@ -58,7 +58,7 @@ Temporarily pauses the service or specific subsystems for a given duration.
 
 **Error Codes:**
 - `405 Method Not Allowed`: If called with any HTTP method other than `POST`.
-- `400 Bad Request`: If the request body contains malformed or unparseable JSON.
+- `400 Bad Request`: If the request body contains malformed JSON, unparseable data, or trailing/composite JSON documents (e.g. `{}{"durationSeconds":5}`).
 
 **Request Behavior:**
 - Passing `"durationSeconds": <int > 0>` pauses blocking protection for that duration.
