@@ -121,6 +121,29 @@ type Filter interface {
 // FilterChain is a chain of filters to be evaluated sequentially.
 type FilterChain []Filter
 
+var (
+	globalFilters []Filter
+	filtersMu     sync.RWMutex
+)
+
+// RegisterFilter allows third-party extensions to register their filters dynamically.
+// This is typically called from an init() function in the extension package.
+func RegisterFilter(f Filter) {
+	filtersMu.Lock()
+	defer filtersMu.Unlock()
+	globalFilters = append(globalFilters, f)
+}
+
+// GetFilters returns a snapshot of the current globally registered filter chain.
+func GetFilters() FilterChain {
+	filtersMu.RLock()
+	defer filtersMu.RUnlock()
+	
+	chain := make(FilterChain, len(globalFilters))
+	copy(chain, globalFilters)
+	return chain
+}
+
 // Process evaluates all filters in the chain.
 func (chain FilterChain) Process(req []byte) (resp []byte, block bool, err error) {
 	for _, filter := range chain {
