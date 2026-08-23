@@ -41,6 +41,10 @@ func RegisterParserForURL(urlPrefix string, p ListParser) {
 	}
 }
 
+func init() {
+	RegisterParserForURL("https://adguardteam.github.io/", &BlocklistParser{})
+}
+
 func loadStateMap(path string) map[string]GravityState {
 	m := make(map[string]GravityState)
 	f, err := os.Open(path)
