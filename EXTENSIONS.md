@@ -82,8 +82,55 @@ Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC), de
 
 **Important Note:** The daemon uses REST/HTTP over a Unix socket, typically located at `/var/run/blackhole.sock` (NOT `/tmp/` and NOT JSON-RPC).
 
-### Capabilities:
-- **Telemetry and Metrics (`/stats`, `/queries`):** Return recent DNS query logs (newline-delimited JSON `application/x-ndjson`), latency metrics, and block rates.
-- **State Management (`/pause`):** Pause or resume filtering dynamically.
+### `GET /stats`
 
-To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackhole.sock`) and send HTTP payloads as defined in the IPC handlers.
+Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
+**Content-Type:** `application/json`
+
+**Example Response:**
+```json
+{
+  "total": 1000,
+  "blocked": 250,
+  "blockPercent": 25.0,
+  "topDomains": {
+    "ads.example.com": 100,
+    "tracker.example.com": 50
+  },
+  "topApps": {
+    "com.apple.Safari": 120,
+    "com.google.Chrome": 80
+  },
+  "windowStart": "2026-08-22T22:11:51Z"
+}
+```
+
+### `GET /queries`
+
+Returns a stream of recent DNS query logs.
+**Content-Type:** `application/x-ndjson`
+
+This endpoint returns a newline-delimited JSON stream where each line is a `QueryRecord` object.
+
+**Example Response Payload (Stream):**
+```json
+{"timestamp":"2026-08-23T22:11:51Z","domain":"ads.example.com","queryType":1,"status":"blocked","processName":"Safari","bundleId":"com.apple.Safari","latencyMs":1.5}
+{"timestamp":"2026-08-23T22:11:52Z","domain":"example.com","queryType":28,"status":"allowed","processName":"Chrome","bundleId":"com.google.Chrome","latencyMs":12.1}
+```
+
+### `POST /pause`
+
+Pauses DNS filtering dynamically for a specified duration.
+**Content-Type:** `application/json`
+
+**Example Request Payload:**
+```json
+{
+  "durationSeconds": 300
+}
+```
+
+**Example Response:**
+`HTTP 200 OK`
+
+To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackhole.sock`) and send HTTP payloads to these endpoints.
