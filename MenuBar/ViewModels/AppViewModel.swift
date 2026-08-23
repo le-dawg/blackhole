@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import SwiftUI
 import Observation
 
@@ -12,16 +13,31 @@ final class AppViewModel {
     
     var isMenuPresented: Bool = false
     
-    // We keep IPCClient as ObservableObject, but expose it here. Wait, actually we can just use the environment or pass it.
-    // If we want it strictly MVVM, we should probably make AppViewModel the one that interacts with IPCClient.
-    // But since IPCClient is ObservableObject, we shouldn't mix observation frameworks trivially inside the view model without wrapping it.
-    // Let's just make it a let property.
-    var ipcClient: IPCClient
+    private let ipcClient: any IPCClientProtocol
     var exclusionModel: ExclusionModel
     
-    init() {
-        self.ipcClient = IPCClient()
+    var currentStats: StatsResponse?
+    var queries: [QueryRecord] = []
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    init(ipcClient: any IPCClientProtocol = IPCClient()) {
+        self.ipcClient = ipcClient
         self.exclusionModel = ExclusionModel()
+        
+        ipcClient.currentStatsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] stats in
+                self?.currentStats = stats
+            }
+            .store(in: &cancellables)
+            
+        ipcClient.queriesPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newQueries in
+                self?.queries = newQueries
+            }
+            .store(in: &cancellables)
     }
     
     func onAppear() {
@@ -30,6 +46,14 @@ final class AppViewModel {
     
     func onDisappear() {
         ipcClient.stopPollingStats()
+    }
+    
+    func startPollingQueries() {
+        ipcClient.startPollingQueries()
+    }
+    
+    func stopPollingQueries() {
+        ipcClient.stopPollingQueries()
     }
     
     func setProtection(active: Bool) {

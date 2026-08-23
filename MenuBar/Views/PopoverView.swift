@@ -34,19 +34,13 @@ struct PopoverView: View {
                 if viewModel.isDnsActive {
                     Menu {
                         Button("Disable for 5 minutes") {
-                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 300) }
-                            
-                            viewModel.setProtection(active: false)
+                            viewModel.pauseProtection(durationSeconds: 300)
                         }
                         Button("Disable for 15 minutes") {
-                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 900) }
-                            
-                            viewModel.setProtection(active: false)
+                            viewModel.pauseProtection(durationSeconds: 900)
                         }
                         Button("Disable indefinitely") {
-                            Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 86400) }
-                            
-                            viewModel.setProtection(active: false)
+                            viewModel.pauseProtection(durationSeconds: 86400)
                         }
                     } label: {
                         Text("Pause Protection")
@@ -56,9 +50,7 @@ struct PopoverView: View {
                     .fixedSize()
                 } else {
                     Button("Enable Protection") {
-                        Task { try? await viewModel.ipcClient.sendPause(durationSeconds: 0) }
-                        
-                        viewModel.setProtection(active: true)
+                        viewModel.enableProtection()
                     }
                     .buttonStyle(.borderless)
                     .font(.caption)
@@ -98,7 +90,7 @@ struct PopoverView: View {
                     if selectedTab == 0 {
                         statusTabContent
                     } else if selectedTab == 1 {
-                        InspectorView(ipc: viewModel.ipcClient)
+                        InspectorView(viewModel: viewModel)
                     } else {
                         exclusionsTabContent
                     }
@@ -201,7 +193,7 @@ struct PopoverView: View {
             }
             
             // Grid of metrics
-            if let stats = viewModel.ipcClient.currentStats {
+            if let stats = viewModel.currentStats {
                 HStack(spacing: 12) {
                     MetricCard(
                         title: "TOTAL QUERIES",

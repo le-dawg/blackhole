@@ -7,9 +7,17 @@ enum IPCError: Error {
 }
 
 @MainActor
-final class IPCClient: ObservableObject {
+final class IPCClient: IPCClientProtocol {
     @Published var currentStats: StatsResponse?
     @Published var queries: [QueryRecord] = []
+    
+    var currentStatsPublisher: AnyPublisher<StatsResponse?, Never> {
+        $currentStats.eraseToAnyPublisher()
+    }
+    
+    var queriesPublisher: AnyPublisher<[QueryRecord], Never> {
+        $queries.eraseToAnyPublisher()
+    }
     
     private var statsTimer: AnyCancellable?
     private var queriesTimer: AnyCancellable?
