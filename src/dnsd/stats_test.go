@@ -22,6 +22,9 @@ func TestStats_IncrementAndSnapshot(t *testing.T) {
 	if snap.TopDomains["ads.com"] != 2 {
 		t.Errorf("expected ads.com to have 2 blocks, got %d", snap.TopDomains["ads.com"])
 	}
+	if !snap.WindowStart.Equal(time.Now().Add(-24 * time.Hour).Truncate(time.Hour)) {
+		t.Errorf("expected WindowStart to be truncated to hour, got %v", snap.WindowStart)
+	}
 }
 
 func TestStats_MaxCapacity(t *testing.T) {

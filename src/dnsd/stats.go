@@ -106,7 +106,8 @@ func (s *GlobalStats) Snapshot() StatsSnapshot {
 	apps := make(map[string]uint64)
 
 	now := time.Now()
-	cutoff := now.Add(-24 * time.Hour).Truncate(time.Hour).Unix()
+	cutoffTime := now.Add(-24 * time.Hour).Truncate(time.Hour)
+	cutoff := cutoffTime.Unix()
 
 	for h, b := range s.buckets {
 		if h < cutoff {
@@ -133,6 +134,6 @@ func (s *GlobalStats) Snapshot() StatsSnapshot {
 		BlockPercent:   pct,
 		TopDomains:     getTop5(domains),
 		TopApps:        getTop5(apps),
-		WindowStart:    now.Add(-24 * time.Hour),
+		WindowStart:    cutoffTime,
 	}
 }
