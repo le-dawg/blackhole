@@ -2,7 +2,8 @@ import Foundation
 import Combine
 
 enum IPCError: Error {
-    case curlFailed
+    case connectionFailed
+    case decodingFailed
 }
 
 @MainActor
@@ -13,10 +14,7 @@ final class IPCClient: ObservableObject {
     private var statsTimer: AnyCancellable?
     private var queriesTimer: AnyCancellable?
     
-    // macOS 13+ supports unix domain sockets natively via URLSession if configured properly, or we can use a custom protocol.
-    // For simplicity, we assume a custom unix socket URL.
-    // Actually, Apple added `URLSession.shared.data(from: URL(fileURLWithPath: "/var/run/blackhole.sock"))`? No, you need a custom stream.
-    // Let's use a simpler approach: curl via Process! It's perfectly fine for a macOS menu bar app.
+    private let socketPath = "/var/run/blackhole.sock"
     
     func startPollingStats() {
         statsTimer = Timer.publish(every: 2.0, on: .main, in: .common).autoconnect().sink { [weak self] _ in
@@ -37,69 +35,51 @@ final class IPCClient: ObservableObject {
     func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
     
     private func fetchStats() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let task = Process()
-            task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "http://localhost/stats", "-s"]
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            try? task.run()
-            task.waitUntilExit()
-            
-            guard let data = try? pipe.fileHandleForReading.readToEnd() else { return }
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601 // Assume ISO8601 or similar if needed. Actually the spec doesn't say, default is fine.
-            if let stats = try? decoder.decode(StatsResponse.self, from: data) {
-                DispatchQueue.main.async { self?.currentStats = stats }
+        Task.detached(priority: .utility) {
+            do {
+                let data = try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/stats")
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                let stats = try decoder.decode(StatsResponse.self, from: data)
+                await MainActor.run { [weak self] in
+                    self?.currentStats = stats
+                }
+            } catch {
+                // Ignore errors for polling
             }
         }
     }
     
     private func fetchQueries() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let task = Process()
-            task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "http://localhost/queries", "-s"]
-            let pipe = Pipe()
-            task.standardOutput = pipe
-            try? task.run()
-            task.waitUntilExit()
-            
-            guard let data = try? pipe.fileHandleForReading.readToEnd() else { return }
-            guard let str = String(data: data, encoding: .utf8) else { return }
-            
-            let lines = str.split(separator: "\n")
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            var parsed: [QueryRecord] = []
-            
-            for line in lines {
-                if let d = line.data(using: .utf8), let rec = try? decoder.decode(QueryRecord.self, from: d) {
-                    parsed.append(rec)
+        Task.detached(priority: .utility) {
+            do {
+                let data = try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/queries")
+                guard let str = String(data: data, encoding: .utf8) else { return }
+                
+                let lines = str.split(separator: "\n")
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                var parsed: [QueryRecord] = []
+                
+                for line in lines {
+                    if let d = line.data(using: .utf8), let rec = try? decoder.decode(QueryRecord.self, from: d) {
+                        parsed.append(rec)
+                    }
                 }
+                
+                await MainActor.run { [weak self] in
+                    self?.queries = parsed.reversed() // newest first
+                }
+            } catch {
+                // Ignore errors for polling
             }
-            
-            DispatchQueue.main.async { self?.queries = parsed.reversed() } // newest first
         }
     }
     
     func sendPause(durationSeconds: Int) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let task = Process()
-            task.launchPath = "/usr/bin/curl"
-            task.arguments = ["--unix-socket", "/var/run/blackhole.sock", "-X", "POST", "-d", "{\"durationSeconds\": \(durationSeconds)}", "http://localhost/pause", "-s", "-f"]
-            task.terminationHandler = { t in
-                if t.terminationStatus == 0 {
-                    continuation.resume(returning: ())
-                } else {
-                    continuation.resume(throwing: IPCError.curlFailed)
-                }
-            }
-            do {
-                try task.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
+        let body = "{\"durationSeconds\": \(durationSeconds)}"
+        _ = try await Task.detached(priority: .userInitiated) {
+            try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/pause", method: "POST", body: body)
+        }.value
     }
 }

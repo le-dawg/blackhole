@@ -3,13 +3,11 @@ import MenuBarExtraAccess
 
 @main
 struct BlackholeApp: App {
-    @State private var isMenuPresented = false
-    @State private var isDnsActive = false
-    @State private var exclusionModel = ExclusionModel()
+    @State private var viewModel = AppViewModel()
     
     var body: some Scene {
         MenuBarExtra("Blackhole", systemImage: "circle.circle") {
-            PopoverView(isActive: $isDnsActive, isMenuPresented: isMenuPresented, model: exclusionModel)
+            PopoverView(viewModel: viewModel)
                 .background(
                     VisualEffectView(material: .popover, blendingMode: .behindWindow)
                 )
@@ -24,16 +22,12 @@ struct BlackholeApp: App {
                     window.backgroundColor = .clear
                 }
         }
-        .menuBarExtraAccess(isPresented: $isMenuPresented)
+        .menuBarExtraAccess(isPresented: $viewModel.isMenuPresented)
         .menuBarExtraStyle(.window)
-        .onChange(of: isDnsActive) { _, newValue in
-            DispatchQueue.global(qos: .userInitiated).async {
-                if newValue {
-                    setLocalDNS()
-                } else {
-                    clearLocalDNS()
-                }
-            }
+        .onChange(of: viewModel.isMenuPresented) { _, newValue in
+            // just to demonstrate that viewModel could observe this if needed, 
+            // but the system handles menu presentation via menuBarExtraAccess.
+            // But we do need to bind menuBarExtraAccess to viewModel.isMenuPresented.
         }
     }
 }

@@ -11,7 +11,13 @@ struct ExcludedApp: Identifiable, Codable, Equatable, Sendable {
 
 @Observable @MainActor
 class ExclusionModel {
-    var excludedApps: [ExcludedApp] = []
+    var excludedApps: [ExcludedApp] = [] {
+        didSet {
+            if !isInitialLoad {
+                saveExclusionsDebounced()
+            }
+        }
+    }
     var isInitialLoad: Bool = true
     
     private var saveTask: Task<Void, Never>?
