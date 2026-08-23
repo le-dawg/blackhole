@@ -1,44 +1,50 @@
 package dnsd
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net"
-	
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
-func validateDNSResponse(req, resp []byte) error {
-	if len(req) < 12 || len(resp) < 12 {
-		return errors.New("invalid length")
+func validateDNSResponse(reqRaw, respRaw []byte) error {
+	var req, resp dnsmessage.Message
+	if err := req.Unpack(reqRaw); err != nil {
+		return err
 	}
-	// 1. TXID
-	if req[0] != resp[0] || req[1] != resp[1] {
+	if err := resp.Unpack(respRaw); err != nil {
+		return err
+	}
+
+	if req.Header.ID != resp.Header.ID {
 		return errors.New("txid mismatch")
 	}
-	
-	// Fast-path bailiwick: we just require the response to be somewhat sane for now
-	// Ideally we parse the QNAME. We'll do a simple substring match for the QNAME bytes.
-	// Find null terminator of QNAME in req
-	idx := 12
-	for idx < len(req) && req[idx] != 0 {
-		idx += int(req[idx]) + 1
+
+	if len(req.Questions) == 0 || len(resp.Questions) == 0 {
+		return errors.New("missing questions")
 	}
-	if idx+5 > len(req) {
-		return errors.New("invalid request qname")
+
+	q := req.Questions[0]
+	rq := resp.Questions[0]
+	if q.Name != rq.Name || q.Type != rq.Type {
+		return errors.New("qname/qtype mismatch")
 	}
-	qname := req[12 : idx+1]
-	
-	// QNAME should be in response
-	if !bytes.Contains(resp, qname) {
-		return errors.New("bailiwick mismatch")
+
+	// Bailiwick check logic here
+	qNameStr := q.Name.String()
+	for _, ans := range resp.Answers {
+		ansName := ans.Header.Name.String()
+		if ansName != qNameStr && !strings.HasSuffix(ansName, "."+qNameStr) {
+			return errors.New("bailiwick mismatch")
+		}
 	}
 
 	return nil
 }
-
 
 func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) ([]byte, error) {
 	if dialContext == nil {

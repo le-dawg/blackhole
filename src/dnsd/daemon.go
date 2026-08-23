@@ -6,7 +6,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -82,7 +81,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err != nil {
 		log.Printf("Warning: Failed to listen on IPC socket: %v", err)
 	} else {
-		if err := os.Chmod(d.config.SocketPath, 0666); err != nil {
+		if err := os.Chmod(d.config.SocketPath, 0600); err != nil {
 			log.Printf("Warning: failed to chmod IPC socket: %v", err)
 		}
 		_, err = StartIPCServer(ipcListener, rb, stats)
@@ -102,21 +101,67 @@ func (d *Daemon) handleSignals(conn *net.UDPConn) {
 	log.Printf("Received signal %v. Cleaning up...", sig)
 	StopVPNMonitor()
 	conn.Close()
-
-	cmd := exec.Command("sh", "-c", `
-		networksetup -listallnetworkservices | grep -v '*' | while read service; do
-			networksetup -setdnsservers "$service" Empty
-		done
-	`)
-	if err := cmd.Run(); err != nil {
-		log.Printf("Failed to reset DNS settings: %v", err)
-	}
 	os.Exit(0)
 }
 
+func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
+	var msg dnsmessage.Message
+	if err := msg.Unpack(payload); err != nil {
+		return
+	}
+
+	if len(msg.Questions) == 0 {
+		return
+	}
+
+	question := msg.Questions[0]
+	domain := question.Name.String()
+	if len(domain) > 1 && domain[len(domain)-1] == '.' {
+		domain = domain[:len(domain)-1]
+	}
+
+	startTime := time.Now()
+
+	procName, bundleID, err := GetProcessInfoForPort(uint16(cliAddr.Port), exclusionManager.GetCliPatterns())
+	isExcluded := false
+	if err == nil {
+		isExcluded = exclusionManager.IsExcluded(procName, bundleID)
+	}
+
+	var status string
+
+	if IsPaused() {
+		status = "Allowed"
+		d.forwardQuery(payload, cliAddr, conn, msg, domain)
+	} else if isExcluded {
+		status = "Excluded"
+		log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
+		d.forwardQuery(payload, cliAddr, conn, msg, domain)
+	} else if r.Resolve(domain) {
+		status = "Blocked"
+		log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
+		sendBlockedResponse(msg, cliAddr, conn)
+	} else {
+		status = "Allowed"
+		d.forwardQuery(payload, cliAddr, conn, msg, domain)
+	}
+
+	latencyMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+	stats.Increment(status == "Blocked", domain, procName)
+	rb.Push(QueryRecord{
+		Timestamp:   time.Now(),
+		Domain:      domain,
+		QueryType:   uint16(question.Type),
+		Status:      status,
+		ProcessName: procName,
+		BundleID:    bundleID,
+		LatencyMs:   latencyMs,
+	})
+}
+
 func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
-	buf := make([]byte, 4096)
 	for {
+		buf := make([]byte, 4096)
 		n, cliAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
@@ -126,58 +171,10 @@ func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionMa
 			continue
 		}
 
-		var msg dnsmessage.Message
-		if err := msg.Unpack(buf[:n]); err != nil {
-			continue
-		}
+		payload := make([]byte, n)
+		copy(payload, buf[:n])
 
-		if len(msg.Questions) == 0 {
-			continue
-		}
-
-		question := msg.Questions[0]
-		domain := question.Name.String()
-		if len(domain) > 1 && domain[len(domain)-1] == '.' {
-			domain = domain[:len(domain)-1]
-		}
-
-		startTime := time.Now()
-
-		procName, bundleID, err := GetProcessInfoForPort(uint16(cliAddr.Port), exclusionManager.GetCliPatterns())
-		isExcluded := false
-		if err == nil {
-			isExcluded = exclusionManager.IsExcluded(procName, bundleID)
-		}
-
-		var status string
-
-		if IsPaused() {
-			status = "Allowed"
-			d.forwardQuery(buf[:n], cliAddr, conn, msg, domain)
-		} else if isExcluded {
-			status = "Excluded"
-			log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
-			d.forwardQuery(buf[:n], cliAddr, conn, msg, domain)
-		} else if r.Resolve(domain) {
-			status = "Blocked"
-			log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
-			sendBlockedResponse(msg, cliAddr, conn)
-		} else {
-			status = "Allowed"
-			d.forwardQuery(buf[:n], cliAddr, conn, msg, domain)
-		}
-
-		latencyMs := float64(time.Since(startTime).Microseconds()) / 1000.0
-		stats.Increment(status == "Blocked", domain, procName)
-		rb.Push(QueryRecord{
-			Timestamp:   time.Now(),
-			Domain:      domain,
-			QueryType:   uint16(question.Type),
-			Status:      status,
-			ProcessName: procName,
-			BundleID:    bundleID,
-			LatencyMs:   latencyMs,
-		})
+		go d.processQuery(payload, cliAddr, conn, exclusionManager, r, rb, stats)
 	}
 }
 

@@ -7,15 +7,28 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
-	"golang.org/x/sys/unix"
+	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 type AuthenticatedUnixListener struct {
 	*net.UnixListener
-	AllowedUID uint32
+	AllowedUIDs []uint32
+}
+
+func getConsoleUID() uint32 {
+	info, err := os.Stat("/dev/console")
+	if err == nil {
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			return stat.Uid
+		}
+	}
+	return 0
 }
 
 func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
@@ -23,7 +36,7 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
 		conn.Close()
@@ -43,7 +56,16 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 			authErr = err
 			return
 		}
-		if cred.Uid != l.AllowedUID {
+
+		allowed := false
+		for _, uid := range l.AllowedUIDs {
+			if cred.Uid == uid {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
 			authErr = errors.New("unauthorized UID")
 		}
 	})
@@ -69,14 +91,14 @@ func IsPaused() bool {
 func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (*http.Server, error) {
 
 	mux := http.NewServeMux()
-	
+
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(stats.Snapshot()); err != nil {
 			log.Printf("IPC Encode error (stats): %v", err)
 		}
 	})
-	
+
 	mux.HandleFunc("/queries", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		enc := json.NewEncoder(w)
@@ -87,7 +109,7 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 			}
 		}
 	})
-	
+
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			DurationSeconds int `json:"durationSeconds"`
@@ -96,7 +118,7 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		
+
 		pauseMutex.Lock()
 		if pauseTimer != nil {
 			pauseTimer.Stop()
@@ -110,13 +132,13 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 			})
 		}
 		pauseMutex.Unlock()
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]bool{"ok": true}); err != nil {
 			log.Printf("IPC Encode error (pause): %v", err)
 		}
 	})
-	
+
 	srv := &http.Server{
 		Handler:      mux,
 		ReadTimeout:  2 * time.Second,
@@ -124,12 +146,16 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 	}
 	go func() {
 		if unixListener, ok := listener.(*net.UnixListener); ok {
-			listener = &AuthenticatedUnixListener{UnixListener: unixListener, AllowedUID: 0}
+			allowed := []uint32{0}
+			if consoleUID := getConsoleUID(); consoleUID != 0 {
+				allowed = append(allowed, consoleUID)
+			}
+			listener = &AuthenticatedUnixListener{UnixListener: unixListener, AllowedUIDs: allowed}
 		}
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("IPC Server err: %v", err)
 		}
 	}()
-	
+
 	return srv, nil
 }
