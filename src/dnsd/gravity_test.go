@@ -17,7 +17,7 @@ func TestGravitySync(t *testing.T) {
 	dir := t.TempDir()
 	DefaultLists = []string{server.URL} // Override for test
 
-	res := NewResolver(nil)
+	res := NewFilterEngine(nil)
 	
 	err := refreshGravity(dir, res)
 	if err != nil {

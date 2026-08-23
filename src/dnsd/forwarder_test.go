@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"testing"
@@ -36,17 +37,10 @@ func TestRaceForward(t *testing.T) {
 		return serverAddr, dialer
 	}
 
-	fastResp := []byte("fast response")
-	slowResp := []byte("slow response")
-
-	fastAddr, fastDialer := startDummyServer(10*time.Millisecond, fastResp)
-	slowAddr, slowDialer := startDummyServer(100*time.Millisecond, slowResp)
-
-	upstreams := []string{slowAddr, fastAddr}
-
 	// Prepare dummy DNS message bytes
 	var msg dnsmessage.Message
 	msg.Header.ID = 1234
+	msg.Header.Response = true
 	msg.Questions = []dnsmessage.Question{
 		{
 			Name:  dnsmessage.MustNewName("example.com."),
@@ -55,6 +49,39 @@ func TestRaceForward(t *testing.T) {
 		},
 	}
 	rawMsg, _ := msg.Pack()
+	
+	msgFast := msg
+	msgFast.Answers = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  msg.Questions[0].Name,
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+				TTL:   60,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{1, 2, 3, 4}},
+		},
+	}
+	fastResp, _ := msgFast.Pack()
+
+	msgSlow := msg
+	msgSlow.Answers = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  msg.Questions[0].Name,
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+				TTL:   60,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{5, 6, 7, 8}},
+		},
+	}
+	slowResp, _ := msgSlow.Pack()
+
+	fastAddr, fastDialer := startDummyServer(10*time.Millisecond, fastResp)
+	slowAddr, slowDialer := startDummyServer(100*time.Millisecond, slowResp)
+
+	upstreams := []string{slowAddr, fastAddr}
 
 	compositeDialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if addr == slowAddr {
@@ -71,7 +98,7 @@ func TestRaceForward(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	if string(resp) != "fast response" {
-		t.Errorf("expected fast response, got %s", string(resp))
+	if !bytes.Equal(resp, fastResp) {
+		t.Errorf("expected fast response, got %v", resp)
 	}
 }

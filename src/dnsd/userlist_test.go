@@ -26,7 +26,7 @@ func TestUserListWatcher(t *testing.T) {
 	os.WriteFile(wlPath, []byte("good.com\n"), 0644)
 	os.WriteFile(blPath, []byte("bad.com\n"), 0644)
 
-	res := NewResolver(nil)
+	res := NewFilterEngine(nil)
 	watcher, err := StartUserListWatcher(dir, res)
 	if err != nil {
 		t.Fatal(err)

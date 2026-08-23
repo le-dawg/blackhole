@@ -580,3 +580,4 @@ func parsePlistXML(data []byte) string {
 	}
 	return ""
 }
+func WaitForScan() { time.Sleep(50 * time.Millisecond); processScanMu.Lock(); processScanMu.Unlock() }

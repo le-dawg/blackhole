@@ -45,7 +45,7 @@ func TestDNSProxyHandling(t *testing.T) {
     }()
 
     // Create a test resolver
-    r := NewResolver([]string{upstream.LocalAddr().String()})
+    r := NewFilterEngine([]string{upstream.LocalAddr().String()})
     r.AddBlockedDomain("ads.doubleclick.net")
 
     // Setup proxy UDP listener on ephemeral port

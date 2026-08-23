@@ -15,7 +15,7 @@ type UserLists struct {
 	watcher *fsnotify.Watcher
 }
 
-func StartUserListWatcher(dir string, r *Resolver) (*UserLists, error) {
+func StartUserListWatcher(dir string, r *FilterEngine) (*UserLists, error) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err

@@ -37,7 +37,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 	defer exclusionManager.Close()
 
-	r := NewResolver(d.upstreams)
+	r := NewFilterEngine(d.upstreams)
 
 	StartGravitySync(d.config.DataDir, r)
 	userLists, err := StartUserListWatcher(d.config.DataDir, r)
@@ -114,7 +114,7 @@ func (d *Daemon) handleSignals(conn *net.UDPConn) {
 	os.Exit(0)
 }
 
-func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionManager, r *Resolver, rb *RingBuffer, stats *GlobalStats) {
+func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
 	buf := make([]byte, 4096)
 	for {
 		n, cliAddr, err := conn.ReadFromUDP(buf)

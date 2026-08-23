@@ -11,6 +11,8 @@ import (
 
 func TestProcessCorrelationInactive(t *testing.T) {
 	// Ephemeral ports without active sockets should fail cleanly or return empty
+	_, _, _ = GetProcessInfoForPort(9999, []string{"litellm"})
+	WaitForScan()
 	name, bundleID, err := GetProcessInfoForPort(9999, []string{"litellm"})
 	if err == nil && (name != "" || bundleID != "") {
 		t.Errorf("Expected lookup on inactive port to fail or return empty. Got name=%s, bundleID=%s", name, bundleID)
@@ -36,6 +38,8 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 	}
 
 	// Lookup process info for our listening port
+	_, _, _ = GetProcessInfoForPort(port, []string{"litellm"})
+	WaitForScan()
 	procName, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
@@ -75,6 +79,8 @@ func TestProcessCorrelationActiveUDP(t *testing.T) {
 	}
 
 	// Lookup process info for our listening port
+	_, _, _ = GetProcessInfoForPort(port, []string{"litellm"})
+	WaitForScan()
 	procName, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for active port %d: %v", port, err)
@@ -134,9 +140,7 @@ func TestExtractBundleID(t *testing.T) {
 
 func TestProcessCacheTTL(t *testing.T) {
 	// Clear any existing cache entries
-	portToPIDCacheMu.Lock()
-	portToPIDCache = make(map[uint16]portPIDEntry)
-	portToPIDCacheMu.Unlock()
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	pidMetadataCacheMu.Lock()
 	pidMetadataCache = make(map[int]pidMetadataEntry)
@@ -150,13 +154,16 @@ func TestProcessCacheTTL(t *testing.T) {
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
 	ln.Close()
 
-	// Seed cache directly for the port
-	portToPIDCacheMu.Lock()
-	portToPIDCache[port] = portPIDEntry{
+	oldCache := portToPIDCache.Load()
+	newMappings := make(map[uint16]portPIDEntry)
+	for k, v := range oldCache.Mappings {
+		newMappings[k] = v
+	}
+	newMappings[port] = portPIDEntry{
 		pid:       12345,
 		createdAt: time.Now(),
 	}
-	portToPIDCacheMu.Unlock()
+	portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
 	pidMetadataCacheMu.Lock()
 	pidMetadataCache[12345] = pidMetadataEntry{
@@ -178,11 +185,15 @@ func TestProcessCacheTTL(t *testing.T) {
 	}
 
 	// Expire cache manually
-	portToPIDCacheMu.Lock()
-	pEntry := portToPIDCache[port]
+	oldCache2 := portToPIDCache.Load()
+	newMappings2 := make(map[uint16]portPIDEntry)
+	for k, v := range oldCache2.Mappings {
+		newMappings2[k] = v
+	}
+	pEntry := newMappings2[port]
 	pEntry.createdAt = time.Now().Add(-6 * time.Second)
-	portToPIDCache[port] = pEntry
-	portToPIDCacheMu.Unlock()
+	newMappings2[port] = pEntry
+	portToPIDCache.Store(&PortCache{Mappings: newMappings2})
 
 	pidMetadataCacheMu.Lock()
 	mEntry := pidMetadataCache[12345]
@@ -191,6 +202,8 @@ func TestProcessCacheTTL(t *testing.T) {
 	pidMetadataCacheMu.Unlock()
 
 	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error)
+	_, _, _ = GetProcessInfoForPort(port, []string{"litellm"})
+	WaitForScan()
 	_, _, err = GetProcessInfoForPort(port, []string{"litellm"})
 	if err == nil {
 		t.Errorf("Expected query to fail after cache expiration")
@@ -287,20 +300,19 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 	port2 := uint16(ln2.Addr().(*net.TCPAddr).Port)
 
 	// Clear the portToPIDCache completely
-	portToPIDCacheMu.Lock()
-	portToPIDCache = make(map[uint16]portPIDEntry)
-	portToPIDCacheMu.Unlock()
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	// Query port 1. This should run a system scan and populate both port 1 and port 2.
+	_, _, err = GetProcessInfoForPort(port1, []string{"litellm"})
+	WaitForScan()
 	_, _, err = GetProcessInfoForPort(port1, []string{"litellm"})
 	if err != nil {
 		t.Fatalf("Failed to get process info for port1: %v", err)
 	}
 
 	// Verify that port 2 is already in the portToPIDCache!
-	portToPIDCacheMu.RLock()
-	entry2, found := portToPIDCache[port2]
-	portToPIDCacheMu.RUnlock()
+	c := portToPIDCache.Load()
+	entry2, found := c.Mappings[port2]
 
 	if !found {
 		t.Errorf("Expected port 2 (%d) to be bulk populated in the portToPIDCache after querying port 1 (%d), but it was not found", port2, port1)
