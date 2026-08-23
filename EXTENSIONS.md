@@ -114,8 +114,8 @@ This endpoint returns a newline-delimited JSON stream where each line is a `Quer
 
 **Example Response Payload (Stream):**
 ```json
-{"timestamp":"2026-08-23T22:11:51Z","domain":"ads.example.com","queryType":1,"status":"blocked","processName":"Safari","bundleId":"com.apple.Safari","latencyMs":1.5}
-{"timestamp":"2026-08-23T22:11:52Z","domain":"example.com","queryType":28,"status":"allowed","processName":"Chrome","bundleId":"com.google.Chrome","latencyMs":12.1}
+{"timestamp":"2026-08-23T22:11:51Z","domain":"ads.example.com","queryType":1,"status":"Blocked","processName":"Safari","bundleId":"com.apple.Safari","latencyMs":1.5}
+{"timestamp":"2026-08-23T22:11:52Z","domain":"example.com","queryType":28,"status":"Allowed","processName":"Chrome","bundleId":"com.google.Chrome","latencyMs":12.1}
 ```
 
 ### `POST /pause`
@@ -132,5 +132,12 @@ Pauses DNS filtering dynamically for a specified duration.
 
 **Example Response:**
 `HTTP 200 OK`
+**Content-Type:** `application/json`
+
+```json
+{
+  "ok": true
+}
+```
 
 To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackhole.sock`) and send HTTP payloads to these endpoints.

@@ -63,6 +63,15 @@ Temporarily pauses the service or specific subsystems for a given duration.
 }
 ```
 
+**Response Payload (JSON):**
+`HTTP 200 OK`
+
+```json
+{
+  "ok": true
+}
+```
+
 ### Get Statistics
 `GET /stats`
 
@@ -93,6 +102,6 @@ Retrieves a snapshot of recent DNS queries in newline-delimited JSON (NDJSON) fo
 
 **Response Payload (`application/x-ndjson`):**
 ```ndjson
-{"timestamp":"2026-08-23T22:05:12Z","domain":"ads.example.com","queryType":1,"status":"BLOCKED","processName":"Google Chrome","bundleId":"com.google.Chrome","latencyMs":0.5}
-{"timestamp":"2026-08-23T22:05:13Z","domain":"api.github.com","queryType":1,"status":"ALLOWED","processName":"Terminal","bundleId":"com.apple.Terminal","latencyMs":12.3}
+{"timestamp":"2026-08-23T22:05:12Z","domain":"ads.example.com","queryType":1,"status":"Blocked","processName":"Google Chrome","bundleId":"com.google.Chrome","latencyMs":0.5}
+{"timestamp":"2026-08-23T22:05:13Z","domain":"api.github.com","queryType":1,"status":"Allowed","processName":"Terminal","bundleId":"com.apple.Terminal","latencyMs":12.3}
 ```
