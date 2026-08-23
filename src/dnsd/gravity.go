@@ -3,8 +3,6 @@ package dnsd
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -54,7 +52,7 @@ func StartGravitySync(dir string, r *FilterEngine) {
 func refreshGravity(dir string, r *FilterEngine) error {
 	cachePath := filepath.Join(dir, "gravity.cache")
 	statePath := filepath.Join(dir, "gravity.state.json")
-	
+
 	// Fast path: load from cache if < 24h old (skip for now since we have proper conditional requests)
 	if stat, err := os.Stat(cachePath); err == nil {
 		if time.Since(stat.ModTime()) < 24*time.Hour {
@@ -83,7 +81,7 @@ func refreshGravity(dir string, r *FilterEngine) error {
 
 	successCount := 0
 	notModifiedCount := 0
-	
+
 	for _, url := range DefaultLists {
 		req, _ := http.NewRequest("GET", url, nil)
 		if state, ok := stateMap[url]; ok {
@@ -100,7 +98,7 @@ func refreshGravity(dir string, r *FilterEngine) error {
 			log.Printf("Failed to fetch %s: %v", url, err)
 			continue
 		}
-		
+
 		if resp.StatusCode == http.StatusNotModified {
 			resp.Body.Close()
 			notModifiedCount++
@@ -113,13 +111,13 @@ func refreshGravity(dir string, r *FilterEngine) error {
 			log.Printf("Failed to fetch %s, status code: %d", url, resp.StatusCode)
 			continue
 		}
-		
+
 		parser := &PiHoleParser{}
 		parser.Parse(resp.Body, func(domain string) {
 			writer.WriteString(domain + "\n")
 		})
 		resp.Body.Close()
-		
+
 		stateMap[url] = GravityState{
 			ETag:         resp.Header.Get("ETag"),
 			LastModified: resp.Header.Get("Last-Modified"),
@@ -128,14 +126,14 @@ func refreshGravity(dir string, r *FilterEngine) error {
 	}
 
 	writer.Flush()
-	
+
 	if successCount == 0 {
 		return loadCache(cachePath, r)
 	}
 
 	success = true
 	f.Close()
-	
+
 	if notModifiedCount == len(DefaultLists) {
 		// All 304 Not Modified, touch cache and return
 		os.Remove(tempCache)
@@ -155,7 +153,7 @@ func loadCache(cachePath string, r *FilterEngine) error {
 		return err
 	}
 	defer f.Close()
-	
+
 	scanner := bufio.NewScanner(f)
 	newRoot := BuildTrieFromScanner(scanner)
 	r.UpdateRoot(newRoot)
