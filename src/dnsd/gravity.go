@@ -130,7 +130,15 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	for i, url := range DefaultLists {
 		cachePath := filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", i))
 
-		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			log.Printf("Failed to create request for %s: %v", url, err)
+			if f, err := os.Open(cachePath); err == nil {
+				readers = append(readers, f)
+				filesToClose = append(filesToClose, f)
+			}
+			continue
+		}
 		if state, ok := stateMap[url]; ok {
 			if state.ETag != "" {
 				req.Header.Set("If-None-Match", state.ETag)

@@ -203,3 +203,18 @@ func TestStartGravitySync_Lifecycle(t *testing.T) {
 	
 	cancel()
 }
+
+func TestRefreshGravity_MalformedURL(t *testing.T) {
+	dir := t.TempDir()
+	res := NewFilterEngine(nil)
+
+	DefaultLists = []string{"://invalid-url-scheme"}
+
+	err := refreshGravity(context.Background(), dir, res)
+	if err == nil {
+		t.Fatal("Expected error on malformed URL, got nil")
+	}
+	if err.Error() != "no gravity lists available" {
+		t.Errorf("Expected 'no gravity lists available', got %v", err)
+	}
+}
