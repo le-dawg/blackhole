@@ -24,21 +24,56 @@ type GravityState struct {
 	LastModified string `json:"last_modified"`
 }
 
+var activeParser ListParser = &PiHoleParser{}
+
+// SetParser allows users to inject a custom parser implementation globally.
+func SetParser(p ListParser) {
+	if p != nil {
+		activeParser = p
+	}
+}
+
 func loadStateMap(path string) map[string]GravityState {
 	m := make(map[string]GravityState)
 	f, err := os.Open(path)
-	if err == nil {
-		defer f.Close()
-		json.NewDecoder(f).Decode(&m)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("Failed to open state map: %v", err)
+		}
+		return m
+	}
+	defer f.Close()
+
+	if err := json.NewDecoder(f).Decode(&m); err != nil && err != io.EOF {
+		log.Printf("Failed to decode state map: %v", err)
 	}
 	return m
 }
 
 func saveStateMap(path string, m map[string]GravityState) {
-	f, err := os.Create(path)
-	if err == nil {
-		defer f.Close()
-		json.NewEncoder(f).Encode(m)
+	tempPath := path + ".tmp"
+	f, err := os.Create(tempPath)
+	if err != nil {
+		log.Printf("Failed to create temp state map file: %v", err)
+		return
+	}
+
+	if err := json.NewEncoder(f).Encode(m); err != nil {
+		log.Printf("Failed to encode state map: %v", err)
+		f.Close()
+		os.Remove(tempPath)
+		return
+	}
+
+	if err := f.Close(); err != nil {
+		log.Printf("Failed to close temp state map file: %v", err)
+		os.Remove(tempPath)
+		return
+	}
+
+	if err := os.Rename(tempPath, path); err != nil {
+		log.Printf("Failed to rename temp state map to final path: %v", err)
+		os.Remove(tempPath)
 	}
 }
 
@@ -69,7 +104,7 @@ func refreshGravity(dir string, r *FilterEngine) error {
 
 	for i, url := range DefaultLists {
 		cachePath := filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", i))
-		
+
 		req, _ := http.NewRequest("GET", url, nil)
 		if state, ok := stateMap[url]; ok {
 			if state.ETag != "" {
@@ -122,8 +157,8 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		}
 
 		writer := bufio.NewWriter(f)
-		parser := &PiHoleParser{}
-		
+		parser := activeParser
+
 		var writeErr error
 		parseErr := parser.Parse(resp.Body, func(domain string) {
 			if writeErr == nil {
@@ -132,21 +167,21 @@ func refreshGravity(dir string, r *FilterEngine) error {
 				}
 			}
 		})
-		
+
 		if writeErr == nil && parseErr != nil {
 			writeErr = parseErr
 		}
-		
+
 		if writeErr == nil {
 			if err := writer.Flush(); err != nil {
 				writeErr = err
 			}
 		}
-		
+
 		if err := f.Close(); err != nil && writeErr == nil {
 			writeErr = err
 		}
-		
+
 		resp.Body.Close()
 
 		if writeErr != nil {
