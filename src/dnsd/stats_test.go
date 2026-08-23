@@ -3,6 +3,7 @@ package dnsd
 import (
 	"fmt"
 	"testing"
+	"time"
 )
 
 func TestStats_IncrementAndSnapshot(t *testing.T) {
@@ -35,8 +36,11 @@ func TestStats_MaxCapacity(t *testing.T) {
 	}
 
 	s.mu.Lock()
-	lDomain := len(s.topDomains)
-	lApp := len(s.topApps)
+	now := time.Now()
+	hour := now.Truncate(time.Hour).Unix()
+	b := s.buckets[hour]
+	lDomain := len(b.domains)
+	lApp := len(b.apps)
 	s.mu.Unlock()
 
 	if lDomain != 10000 {
