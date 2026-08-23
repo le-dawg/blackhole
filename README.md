@@ -100,8 +100,14 @@ Retrieves current operational metrics and statistics.
 
 Retrieves a snapshot of recent DNS queries in newline-delimited JSON (NDJSON) format.
 
+The daemon emits the following status values:
+- `Allowed`: Normal DNS resolution via configured upstreams.
+- `Blocked`: Domain blocked and sinkholed to `0.0.0.0`.
+- `Excluded`: Query allowed via app-specific bypass rule (process name or bundle ID).
+
 **Response Payload (`application/x-ndjson`):**
 ```ndjson
 {"timestamp":"2026-08-23T22:05:12Z","domain":"ads.example.com","queryType":1,"status":"Blocked","processName":"Google Chrome","bundleId":"com.google.Chrome","latencyMs":0.5}
 {"timestamp":"2026-08-23T22:05:13Z","domain":"api.github.com","queryType":1,"status":"Allowed","processName":"Terminal","bundleId":"com.apple.Terminal","latencyMs":12.3}
+{"timestamp":"2026-08-23T22:05:14Z","domain":"tracking.slack.com","queryType":1,"status":"Excluded","processName":"Slack","bundleId":"com.tinyspeck.slackmacgap","latencyMs":2.4}
 ```
