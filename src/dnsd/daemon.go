@@ -130,20 +130,23 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 
 	var status string
 
+	var chain FilterChain
 	if IsPaused() {
 		status = "Allowed"
-		d.forwardQuery(payload, cliAddr, conn, msg, domain)
+		d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
 	} else if isExcluded {
 		status = "Excluded"
 		log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
-		d.forwardQuery(payload, cliAddr, conn, msg, domain)
-	} else if r.Resolve(domain) {
-		status = "Blocked"
-		log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
-		sendBlockedResponse(msg, cliAddr, conn)
+		d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
 	} else {
-		status = "Allowed"
-		d.forwardQuery(payload, cliAddr, conn, msg, domain)
+		chain = FilterChain{r}
+		if r.Resolve(domain) {
+			status = "Blocked"
+			log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
+		} else {
+			status = "Allowed"
+		}
+		d.forwardQuery(payload, cliAddr, conn, msg, domain, chain)
 	}
 
 	latencyMs := float64(time.Since(startTime).Microseconds()) / 1000.0
@@ -178,7 +181,7 @@ func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionMa
 	}
 }
 
-func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string) {
+func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) {
 	if len(msg.Questions) > 0 {
 		q := msg.Questions[0]
 		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type)); ok {
@@ -196,7 +199,7 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 	currentUpstreams := d.upstreams
 	d.upstreamMu.RUnlock()
 
-	respRaw, err := RaceForward(raw, currentUpstreams, 500*time.Millisecond, nil)
+	respRaw, err := ForwardWithFilter(chain, raw, currentUpstreams, 500*time.Millisecond, nil)
 	if err == nil {
 		var respMsg dnsmessage.Message
 		if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {

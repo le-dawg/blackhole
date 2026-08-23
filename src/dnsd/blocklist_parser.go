@@ -81,8 +81,3 @@ func (p *PiHoleParser) Parse(r io.Reader, onDomain func(string)) error {
 	return scanner.Err()
 }
 
-// ParseBlocklist remains for backwards compatibility.
-func ParseBlocklist(r io.Reader, onDomain func(string)) error {
-	parser := &BlocklistParser{}
-	return parser.Parse(r, onDomain)
-}

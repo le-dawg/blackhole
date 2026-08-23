@@ -131,3 +131,11 @@ func (chain FilterChain) Process(req []byte) (resp []byte, block bool, err error
 	}
 	return nil, false, nil
 }
+
+func ForwardWithFilter(chain FilterChain, rawMsg []byte, upstreams []string, timeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) ([]byte, error) {
+	resp, block, err := chain.Process(rawMsg)
+	if block || err != nil {
+		return resp, err
+	}
+	return RaceForward(rawMsg, upstreams, timeout, dialContext)
+}

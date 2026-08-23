@@ -30,7 +30,8 @@ inline2.example.com ! inline comment 2
 	}
 
 	var result []string
-	err := ParseBlocklist(strings.NewReader(input), func(domain string) {
+	parser := &BlocklistParser{}
+	err := parser.Parse(strings.NewReader(input), func(domain string) {
 		result = append(result, domain)
 	})
 
