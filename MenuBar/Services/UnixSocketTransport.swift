@@ -104,7 +104,7 @@ actor UnixSocketTransport {
                                     if let range = responseData.range(of: Data("\r\n\r\n".utf8)) {
                                         complete(result: .success(responseData.subdata(in: range.upperBound..<responseData.count)))
                                     } else {
-                                        complete(result: .success(responseData))
+                                        complete(result: .failure(TransportError.invalidResponse))
                                     }
                                 case .failure(let error):
                                     complete(result: .failure(error))
