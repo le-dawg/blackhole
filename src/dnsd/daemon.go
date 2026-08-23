@@ -83,13 +83,15 @@ func (d *Daemon) Start(ctx context.Context) error {
 	var ipcServer *http.Server
 	stats := NewGlobalStats()
 
-	os.Remove(d.config.SocketPath)
-	ipcListener, err := net.Listen("unix", d.config.SocketPath)
-	if err != nil {
-		log.Printf("Warning: Failed to listen on IPC socket: %v", err)
-	} else {
+	if d.config.SocketPath != "" {
+		os.Remove(d.config.SocketPath)
+		ipcListener, err := net.Listen("unix", d.config.SocketPath)
+		if err != nil {
+			return fmt.Errorf("failed to bind IPC socket at %s: %w", d.config.SocketPath, err)
+		}
 		if err := os.Chmod(d.config.SocketPath, 0600); err != nil {
-			log.Printf("Warning: failed to chmod IPC socket: %v", err)
+			ipcListener.Close()
+			return fmt.Errorf("failed to chmod IPC socket: %w", err)
 		}
 		if consoleStat, err := os.Stat("/dev/console"); err == nil {
 			if sysStat, ok := consoleStat.Sys().(*syscall.Stat_t); ok {
@@ -100,7 +102,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 		ipcServer, err = StartIPCServer(ipcListener, rb, stats)
 		if err != nil {
-			log.Printf("Warning: Failed to start IPC server: %v", err)
+			ipcListener.Close()
+			return fmt.Errorf("failed to start IPC server: %w", err)
 		}
 	}
 
@@ -155,8 +158,11 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 	startTime := time.Now()
 
 	procName, bundleID, err := GetProcessInfoForPort(uint16(cliAddr.Port), exclusionManager.GetCliPatterns())
+	if err != nil || procName == "" {
+		procName = "Unknown"
+	}
 	isExcluded := false
-	if err == nil {
+	if procName != "Unknown" {
 		isExcluded = exclusionManager.IsExcluded(procName, bundleID)
 	}
 

@@ -16,12 +16,12 @@ func TestMain(m *testing.M) {
 }
 
 func TestProcessCorrelationInactive(t *testing.T) {
-	// Ephemeral ports without active sockets should fail cleanly or return empty
+	// Ephemeral ports without active sockets should fail cleanly and return "Unknown"
 	_, _, _ = GetProcessInfoForPort(9999, []string{"litellm"})
 	WaitForScan()
 	name, bundleID, err := GetProcessInfoForPort(9999, []string{"litellm"})
-	if err == nil && (name != "" || bundleID != "") {
-		t.Errorf("Expected lookup on inactive port to fail or return empty. Got name=%s, bundleID=%s", name, bundleID)
+	if name != "Unknown" || bundleID != "" {
+		t.Errorf("Expected lookup on inactive port to return 'Unknown' and empty bundleID. Got name=%s, bundleID=%s, err=%v", name, bundleID, err)
 	}
 }
 

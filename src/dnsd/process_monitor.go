@@ -411,7 +411,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 
 	if found && time.Since(entry.createdAt) < 1*time.Minute {
 		if entry.err != nil {
-			return "", "", entry.err
+			return "Unknown", "", entry.err
 		}
 		return entry.metadata.Name, entry.metadata.BundleID, nil
 	}
@@ -426,7 +426,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 
 	if found && time.Since(entry.createdAt) < 1*time.Minute {
 		if entry.err != nil {
-			return "", "", entry.err
+			return "Unknown", "", entry.err
 		}
 		return entry.metadata.Name, entry.metadata.BundleID, nil
 	}
@@ -442,7 +442,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 	pidMetadataCacheMu.Unlock()
 
 	if err != nil {
-		return "", "", err
+		return "Unknown", "", err
 	}
 	return meta.Name, meta.BundleID, nil
 }
@@ -459,9 +459,13 @@ func GetProcessInfoForPort(port uint16, patterns []string) (string, string, erro
 			}
 			if time.Since(entry.createdAt) < ttl {
 				if entry.err != nil {
-					return "", "", entry.err
+					return "Unknown", "", entry.err
 				}
-				return getMetadataForPID(entry.pid, patterns)
+				name, bundleID, err := getMetadataForPID(entry.pid, patterns)
+				if name == "" || err != nil {
+					return "Unknown", "", err
+				}
+				return name, bundleID, nil
 			}
 		}
 	}
