@@ -166,6 +166,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -178,6 +179,10 @@ type ProcessCacheEntry struct {
 type ProcessMetadata struct {
 	Name     string
 	BundleID string
+}
+
+type PortCache struct {
+	Mappings map[uint16]portPIDEntry
 }
 
 type portPIDEntry struct {
@@ -193,8 +198,7 @@ type pidMetadataEntry struct {
 }
 
 var (
-	portToPIDCache     = make(map[uint16]portPIDEntry)
-	portToPIDCacheMu   sync.RWMutex
+	portToPIDCache     atomic.Pointer[PortCache]
 	pidMetadataCache   = make(map[int]pidMetadataEntry)
 	pidMetadataCacheMu sync.RWMutex
 	metadataResolveMu  sync.Mutex
@@ -207,22 +211,24 @@ var (
 )
 
 func init() {
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		for range ticker.C {
 			now := time.Now()
 
-			portToPIDCacheMu.Lock()
-			for port, entry := range portToPIDCache {
+			cache := portToPIDCache.Load()
+			newMappings := make(map[uint16]portPIDEntry)
+			for port, entry := range cache.Mappings {
 				ttl := 5 * time.Second
 				if entry.err != nil {
 					ttl = 2 * time.Second
 				}
-				if now.Sub(entry.createdAt) >= ttl {
-					delete(portToPIDCache, port)
+				if now.Sub(entry.createdAt) < ttl {
+					newMappings[port] = entry
 				}
 			}
-			portToPIDCacheMu.Unlock()
+			portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
 			pidMetadataCacheMu.Lock()
 			for pid, entry := range pidMetadataCache {
@@ -345,11 +351,8 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port
 // to its originating Process Name, Bundle ID (if applicable), and PID.
 func GetProcessInfoForPort(port uint16, patterns []string) (string, string, error) {
-	portToPIDCacheMu.RLock()
-	entry, found := portToPIDCache[port]
-	portToPIDCacheMu.RUnlock()
-
-	if found {
+	cache := portToPIDCache.Load()
+	if entry, found := cache.Mappings[port]; found {
 		ttl := 5 * time.Second
 		if entry.err != nil {
 			ttl = 2 * time.Second
@@ -362,39 +365,40 @@ func GetProcessInfoForPort(port uint16, patterns []string) (string, string, erro
 		}
 	}
 
-	processScanMu.Lock()
-	defer processScanMu.Unlock()
-
-	// Double-check under scan lock
-	portToPIDCacheMu.RLock()
-	entry, found = portToPIDCache[port]
-	portToPIDCacheMu.RUnlock()
-
-	if found {
-		ttl := 5 * time.Second
-		if entry.err != nil {
-			ttl = 2 * time.Second
-		}
-		if time.Since(entry.createdAt) < ttl {
+	// Trigger async scan if not found or expired
+	go func() {
+		processScanMu.Lock()
+		defer processScanMu.Unlock()
+		
+		cache := portToPIDCache.Load()
+		if entry, found := cache.Mappings[port]; found {
+			ttl := 5 * time.Second
 			if entry.err != nil {
-				return "", "", entry.err
+				ttl = 2 * time.Second
 			}
-			return getMetadataForPID(entry.pid, patterns)
+			if time.Since(entry.createdAt) < ttl {
+				return
+			}
 		}
-	}
 
-	pid, err := getProcessInfoForPortNoCache(port)
-	if err != nil {
-		portToPIDCacheMu.Lock()
-		portToPIDCache[port] = portPIDEntry{
-			createdAt: time.Now(),
-			err:       err,
+		_, err := getProcessInfoForPortNoCache(port)
+		
+		oldCache := portToPIDCache.Load()
+		newMappings := make(map[uint16]portPIDEntry)
+		for k, v := range oldCache.Mappings {
+			newMappings[k] = v
 		}
-		portToPIDCacheMu.Unlock()
-		return "", "", err
-	}
+		
+		if err != nil {
+			newMappings[port] = portPIDEntry{
+				createdAt: time.Now(),
+				err:       err,
+			}
+			portToPIDCache.Store(&PortCache{Mappings: newMappings})
+		}
+	}()
 
-	return getMetadataForPID(pid, patterns)
+	return "Unknown", "", nil
 }
 
 func getProcessInfoForPortNoCache(port uint16) (int, error) {
@@ -483,14 +487,18 @@ func getProcessInfoForPortNoCache(port uint16) (int, error) {
 	}
 
 	// Update the portToPIDCache with all found mappings
-	portToPIDCacheMu.Lock()
+	oldCache := portToPIDCache.Load()
+	newMappings := make(map[uint16]portPIDEntry)
+	for k, v := range oldCache.Mappings {
+		newMappings[k] = v
+	}
 	for p, pidVal := range foundMappings {
-		portToPIDCache[p] = portPIDEntry{
+		newMappings[p] = portPIDEntry{
 			pid:       pidVal,
 			createdAt: time.Now(),
 		}
 	}
-	portToPIDCacheMu.Unlock()
+	portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
 	if targetFound {
 		return targetPID, nil

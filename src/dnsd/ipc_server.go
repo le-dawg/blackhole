@@ -3,13 +3,58 @@ package dnsd
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"golang.org/x/sys/unix"
 	"time"
 )
+
+type AuthenticatedUnixListener struct {
+	*net.UnixListener
+	AllowedUID uint32
+}
+
+func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
+	conn, err := l.UnixListener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		conn.Close()
+		return nil, errors.New("not a unix connection")
+	}
+
+	raw, err := unixConn.SyscallConn()
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	var authErr error
+	err = raw.Control(func(fd uintptr) {
+		cred, err := unix.GetsockoptXucred(int(fd), unix.SOL_LOCAL, unix.LOCAL_PEERCRED)
+		if err != nil {
+			authErr = err
+			return
+		}
+		if cred.Uid != l.AllowedUID {
+			authErr = errors.New("unauthorized UID")
+		}
+	})
+
+	if err != nil || authErr != nil {
+		conn.Close()
+		return nil, errors.New("unauthorized ipc access")
+	}
+
+	return conn, nil
+}
 
 var (
 	pauseFlag  int32
@@ -78,6 +123,9 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 		WriteTimeout: 2 * time.Second,
 	}
 	go func() {
+		if unixListener, ok := listener.(*net.UnixListener); ok {
+			listener = &AuthenticatedUnixListener{UnixListener: unixListener, AllowedUID: 0}
+		}
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("IPC Server err: %v", err)
 		}

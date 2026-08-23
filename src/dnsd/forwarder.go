@@ -1,12 +1,44 @@
 package dnsd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
+	
 	"sync"
 	"time"
 )
+
+func validateDNSResponse(req, resp []byte) error {
+	if len(req) < 12 || len(resp) < 12 {
+		return errors.New("invalid length")
+	}
+	// 1. TXID
+	if req[0] != resp[0] || req[1] != resp[1] {
+		return errors.New("txid mismatch")
+	}
+	
+	// Fast-path bailiwick: we just require the response to be somewhat sane for now
+	// Ideally we parse the QNAME. We'll do a simple substring match for the QNAME bytes.
+	// Find null terminator of QNAME in req
+	idx := 12
+	for idx < len(req) && req[idx] != 0 {
+		idx += int(req[idx]) + 1
+	}
+	if idx+5 > len(req) {
+		return errors.New("invalid request qname")
+	}
+	qname := req[12 : idx+1]
+	
+	// QNAME should be in response
+	if !bytes.Contains(resp, qname) {
+		return errors.New("bailiwick mismatch")
+	}
+
+	return nil
+}
+
 
 func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) ([]byte, error) {
 	if dialContext == nil {
@@ -44,9 +76,11 @@ func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialC
 			respBuf := make([]byte, 4096)
 			n, err := conn.Read(respBuf)
 			if err == nil && n > 0 {
-				select {
-				case resultCh <- respBuf[:n]:
-				default:
+				if err := validateDNSResponse(rawMsg, respBuf[:n]); err == nil {
+					select {
+					case resultCh <- respBuf[:n]:
+					default:
+					}
 				}
 			}
 		}(upstream)
