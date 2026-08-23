@@ -3,7 +3,6 @@ package dnsd
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -124,24 +123,25 @@ func TestIPCServer_PauseEndpoint(t *testing.T) {
 }
 
 func TestIPCServer_PeerCredRejection(t *testing.T) {
-	// 1. Success case: Allowed UID
-	tmpFile1 := "/tmp/ipc_test1_go_sentinel.sock"
-	os.Remove(tmpFile1)
-	l1, err := net.Listen("unix", tmpFile1)
+	tmpFile := "/tmp/ipc_test_survival_go_sentinel.sock"
+	os.Remove(tmpFile)
+	l, err := net.Listen("unix", tmpFile)
 	if err != nil {
 		t.Fatalf("failed to listen: %v", err)
 	}
-	defer l1.Close()
-	defer os.Remove(tmpFile1)
+	defer l.Close()
+	defer os.Remove(tmpFile)
 
-	authListener1 := &AuthenticatedUnixListener{
-		UnixListener: l1.(*net.UnixListener),
-		AllowedUIDs:  []uint32{uint32(os.Getuid())},
+	unixListener := l.(*net.UnixListener)
+	// Start with an unauthorized UID
+	authListener := &AuthenticatedUnixListener{
+		UnixListener: unixListener,
+		AllowedUIDs:  []uint32{999999999},
 	}
 
 	rb := NewRingBuffer(10)
 	st := NewGlobalStats()
-	srv, err := StartIPCServer(authListener1, rb, st)
+	srv, err := StartIPCServer(authListener, rb, st)
 	if err != nil {
 		t.Fatalf("failed to start server: %v", err)
 	}
@@ -150,51 +150,30 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", tmpFile1)
+				return net.Dial("unix", tmpFile)
 			},
 		},
+		Timeout: 1 * time.Second,
 	}
 
+	// 1. First request with unauthorized UID is rejected by Accept() loop
 	resp, err := client.Get("http://dummy/stats")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Errorf("expected 200, got %d", resp.StatusCode)
-	}
-
-	// 2. Failure case: Rejected UID
-	tmpFile2 := "/tmp/ipc_test2_go_sentinel.sock"
-	os.Remove(tmpFile2)
-	l2, err := net.Listen("unix", tmpFile2)
-	if err != nil {
-		t.Fatalf("failed to listen: %v", err)
-	}
-	defer l2.Close()
-	defer os.Remove(tmpFile2)
-	
-	authListener2 := &AuthenticatedUnixListener{
-		UnixListener: l2.(*net.UnixListener),
-		AllowedUIDs:  []uint32{999999999},
-	}
-
-	go func() {
-		time.Sleep(50 * time.Millisecond) // Give Accept a chance to start
-		conn, err := net.Dial("unix", tmpFile2)
-		if err == nil {
-			conn.Close()
-		}
-		time.Sleep(50 * time.Millisecond) // Give the rejected connection loop a chance
-		authListener2.Close()
-	}()
-
-	_, err = authListener2.Accept()
 	if err == nil {
-		t.Fatalf("expected Accept to fail with closed error, but it succeeded")
+		resp.Body.Close()
+		t.Fatalf("expected unauthorized request to fail, got status %d", resp.StatusCode)
 	}
-	if !errors.Is(err, net.ErrClosed) && !strings.Contains(err.Error(), "use of closed network connection") {
-		t.Errorf("expected closed network connection error, got: %v", err)
+
+	// 2. Authorize test runner UID on the SAME live server instance
+	authListener.AllowedUIDs = []uint32{uint32(os.Getuid())}
+
+	// 3. Second request to the same server succeeds with 200 OK, proving the server survived
+	resp2, err := client.Get("http://dummy/stats")
+	if err != nil {
+		t.Fatalf("expected authorized request to succeed on surviving server: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", resp2.StatusCode)
 	}
 }
 
