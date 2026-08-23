@@ -116,7 +116,7 @@ func main() {
     stats := dnsd.NewGlobalStats()
     
     // Start IPC Server
-    _, err = dnsd.StartIPCServer("/tmp/blackhole.sock", rb, stats)
+    _, err = dnsd.StartIPCServer("/var/run/blackhole.sock", rb, stats)
     if err != nil {
         log.Printf("Warning: Failed to start IPC server: %v", err)
     }

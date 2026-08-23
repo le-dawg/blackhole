@@ -6,11 +6,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 func TestIPCServer(t *testing.T) {
-	sockPath := "/tmp/blackhole_test.sock"
+	sockPath := filepath.Join(t.TempDir(), "blackhole_test.sock")
 	os.Remove(sockPath)
 
 	rb := NewRingBuffer(10)
