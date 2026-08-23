@@ -95,12 +95,12 @@ Retrieves current operational metrics and statistics.
 
 | Field | Type | Description |
 |---|---|---|
-| `total` | Integer | Total number of queries processed |
-| `blocked` | Integer | Number of queries blocked |
-| `blockPercent` | Float | Percentage of queries blocked |
-| `topDomains` | Object | Map of top requested domains to query counts |
-| `topApps` | Object | Map of top requesting app process names to query counts |
-| `windowStart` | String | ISO-8601 timestamp of when the current aggregation window started |
+| `total` | Integer | Total number of queries processed over the rolling 24-hour window |
+| `blocked` | Integer | Total number of queries blocked/sinkholed over the rolling 24-hour window |
+| `blockPercent` | Float | Percentage of queries blocked (`(blocked / total) * 100.0`) |
+| `topDomains` | Object | Map of top 5 most frequently blocked domains to block counts over the rolling 24-hour window |
+| `topApps` | Object | Map of top 5 client process names generating the most blocked queries to blocked counts over the rolling 24-hour window |
+| `windowStart` | String | RFC3339 timestamp marking the start of the rolling 24-hour aggregation cutoff (`now - 24h`) |
 
 **Response Payload (JSON):**
 ```json
