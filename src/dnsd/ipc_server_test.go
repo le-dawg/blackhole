@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 )
+
 func TestIPCServer(t *testing.T) {
 	// Use net.Pipe for mock listener
 	clientConn, serverConn := net.Pipe()
@@ -111,6 +112,15 @@ func TestIPCServer_PauseEndpoint(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
 	}
+
+	// 3. Test /pause with trailing composite JSON data
+	resp, err = client.Post("http://dummy/pause", "application/json", strings.NewReader(`{}{"durationSeconds": 5}`))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for trailing data, got %d", resp.StatusCode)
+	}
 }
 
 func TestIPCServer_PeerCredRejection(t *testing.T) {
@@ -158,7 +168,7 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 	}
 
 	rb := NewRingBuffer(10)
-	
+
 	now := time.Now().Truncate(time.Second).UTC()
 	record1 := QueryRecord{Timestamp: now, Domain: "blocked.com", QueryType: 1, Status: "Blocked", ProcessName: "curl", BundleID: "com.apple.curl", LatencyMs: 10.5}
 	record2 := QueryRecord{Timestamp: now.Add(time.Second), Domain: "allowed.com", QueryType: 28, Status: "Allowed", ProcessName: "safari", BundleID: "com.apple.Safari", LatencyMs: 15.2}

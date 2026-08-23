@@ -4,6 +4,7 @@ package dnsd
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -79,7 +80,7 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 		conn.Close()
 		return nil, ErrUnauthorizedIPC
 	}
-	
+
 	if authErr != nil {
 		conn.Close()
 		if errors.Is(authErr, ErrUnauthorizedUID) {
@@ -140,8 +141,14 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 		var req struct {
 			DurationSeconds int `json:"durationSeconds"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		dec := json.NewDecoder(r.Body)
+		if err := dec.Decode(&req); err != nil {
 			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		var trailing json.RawMessage
+		if err := dec.Decode(&trailing); err != io.EOF {
+			http.Error(w, "invalid request: trailing data", http.StatusBadRequest)
 			return
 		}
 
