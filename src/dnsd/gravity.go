@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -24,12 +25,17 @@ type GravityState struct {
 	LastModified string `json:"last_modified"`
 }
 
-var activeParser ListParser = &PiHoleParser{}
+var (
+	parserMu     sync.RWMutex
+	activeParser ListParser = &PiHoleParser{}
+)
 
 // SetParser allows users to inject a custom parser implementation globally.
 func SetParser(p ListParser) {
 	if p != nil {
+		parserMu.Lock()
 		activeParser = p
+		parserMu.Unlock()
 	}
 }
 
@@ -157,7 +163,9 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		}
 
 		writer := bufio.NewWriter(f)
+		parserMu.RLock()
 		parser := activeParser
+		parserMu.RUnlock()
 
 		var writeErr error
 		parseErr := parser.Parse(resp.Body, func(domain string) {
