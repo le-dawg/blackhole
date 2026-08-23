@@ -43,15 +43,13 @@ final class IPCClient: IPCClientProtocol {
     func stopPollingQueries() { queriesTimer?.cancel(); queriesTimer = nil }
     
     private func fetchStats() {
-        Task.detached(priority: .utility) {
+        Task {
             do {
-                let data = try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/stats")
+                let data = try await UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/stats")
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let stats = try decoder.decode(StatsResponse.self, from: data)
-                await MainActor.run { [weak self] in
-                    self?.currentStats = stats
-                }
+                self.currentStats = stats
             } catch {
                 // Ignore errors for polling
             }
@@ -59,9 +57,9 @@ final class IPCClient: IPCClientProtocol {
     }
     
     private func fetchQueries() {
-        Task.detached(priority: .utility) {
+        Task {
             do {
-                let data = try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/queries")
+                let data = try await UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/queries")
                 guard let str = String(data: data, encoding: .utf8) else { return }
                 
                 let lines = str.split(separator: "\n")
@@ -75,9 +73,7 @@ final class IPCClient: IPCClientProtocol {
                     }
                 }
                 
-                await MainActor.run { [weak self] in
-                    self?.queries = parsed.reversed() // newest first
-                }
+                self.queries = parsed.reversed() // newest first
             } catch {
                 // Ignore errors for polling
             }
@@ -86,8 +82,6 @@ final class IPCClient: IPCClientProtocol {
     
     func sendPause(durationSeconds: Int) async throws {
         let body = "{\"durationSeconds\": \(durationSeconds)}"
-        _ = try await Task.detached(priority: .userInitiated) {
-            try UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/pause", method: "POST", body: body)
-        }.value
+        _ = try await UnixSocketTransport.sendRequest(socketPath: self.socketPath, endpoint: "/pause", method: "POST", body: body)
     }
 }

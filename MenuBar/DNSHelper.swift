@@ -1,63 +1,28 @@
 import Foundation
+import NetworkExtension
 
-func runProcess(executablePath: String, arguments: [String]) -> String {
-    let process = Process()
-    let pipe = Pipe()
-    
-    process.standardOutput = pipe
-    process.standardError = pipe
-    process.arguments = arguments
-    process.executableURL = URL(fileURLWithPath: executablePath)
-    
+func setLocalDNS() async {
+    let manager = NEDNSSettingsManager.shared()
     do {
-        try process.run()
-        process.waitUntilExit()
+        try await manager.loadFromPreferences()
         
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8) {
-            return output.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+        let dnsSettings = NEDNSSettings(servers: ["127.0.0.1"])
+        manager.dnsSettings = dnsSettings
+        
+        try await manager.saveToPreferences()
+        print("Successfully set local DNS via NEDNSSettingsManager.")
     } catch {
-        return "Error: \(error.localizedDescription)"
-    }
-    return ""
-}
-
-func getActiveNetworkServices() -> [String] {
-    let output = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-listallnetworkservices"])
-    var services: [String] = []
-    let lines = output.components(separatedBy: .newlines)
-    for line in lines {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { continue }
-        if trimmed.hasPrefix("An asterisk") { continue }
-        if trimmed.hasPrefix("*") { continue }
-        services.append(trimmed)
-    }
-    return services
-}
-
-func setLocalDNS() {
-    DispatchQueue.global(qos: .background).async {
-        let services = getActiveNetworkServices()
-        for interface in services {
-            _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "127.0.0.1"])
-            logDNSStatus(for: interface)
-        }
+        print("Failed to set DNS via NEDNSSettingsManager: \(error.localizedDescription)")
     }
 }
 
-func clearLocalDNS() {
-    DispatchQueue.global(qos: .background).async {
-        let services = getActiveNetworkServices()
-        for interface in services {
-            _ = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-setdnsservers", interface, "Empty"])
-            logDNSStatus(for: interface)
-        }
+func clearLocalDNS() async {
+    let manager = NEDNSSettingsManager.shared()
+    do {
+        try await manager.loadFromPreferences()
+        try await manager.removeFromPreferences()
+        print("Successfully cleared local DNS via NEDNSSettingsManager.")
+    } catch {
+        print("Failed to clear DNS via NEDNSSettingsManager: \(error.localizedDescription)")
     }
-}
-
-func logDNSStatus(for interface: String) {
-    let status = runProcess(executablePath: "/usr/sbin/networksetup", arguments: ["-getdnsservers", interface])
-    print("Current DNS servers on \(interface): \(status)")
 }

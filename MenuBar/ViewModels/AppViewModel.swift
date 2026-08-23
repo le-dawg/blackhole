@@ -83,11 +83,11 @@ final class AppViewModel {
     }
     
     private func handleDnsStateChange(isActive: Bool) {
-        Task.detached(priority: .userInitiated) {
+        Task {
             if isActive {
-                setLocalDNS()
+                await setLocalDNS()
             } else {
-                clearLocalDNS()
+                await clearLocalDNS()
             }
         }
     }
