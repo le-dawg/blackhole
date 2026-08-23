@@ -100,7 +100,7 @@ Retrieves current operational metrics and statistics.
 | `blockPercent` | Float | Percentage of queries blocked (`(blocked / total) * 100.0`) |
 | `topDomains` | Object | Map of top 5 most frequently blocked domains to block counts over the rolling 24-hour window |
 | `topApps` | Object | Map of top 5 client process names generating the most blocked queries to blocked counts over the rolling 24-hour window |
-| `windowStart` | String | RFC3339 timestamp marking the start of the rolling 24-hour aggregation cutoff (`now - 24h`) |
+| `windowStart` | String | RFC3339 timestamp marking the start of the hourly-bucketed 24-hour aggregation window (`now.Add(-24h).Truncate(1h)`) |
 
 **Response Payload (JSON):**
 ```json
