@@ -21,6 +21,6 @@ cask "blackhole" do
 
   caveats <<~EOS
     To start the background DNS daemon, you must run the install script manually:
-      sudo /usr/local/bin/blackhole-dnsd --install
+      sudo $(brew --prefix)/Caskroom/blackhole/#{version}/blackhole-release/install.sh
   EOS
 end
