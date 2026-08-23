@@ -3,6 +3,9 @@ package dnsd
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -50,39 +53,23 @@ func StartGravitySync(dir string, r *FilterEngine) {
 }
 
 func refreshGravity(dir string, r *FilterEngine) error {
-	cachePath := filepath.Join(dir, "gravity.cache")
 	statePath := filepath.Join(dir, "gravity.state.json")
-
-	// Fast path: load from cache if < 24h old (skip for now since we have proper conditional requests)
-	if stat, err := os.Stat(cachePath); err == nil {
-		if time.Since(stat.ModTime()) < 24*time.Hour {
-			return loadCache(cachePath, r)
-		}
-	}
-
 	stateMap := loadStateMap(statePath)
 
-	tempCache := cachePath + ".tmp"
-	f, err := os.Create(tempCache)
-	if err != nil {
-		return loadCache(cachePath, r) // Fallback to stale cache
-	}
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	success := false
+	var readers []io.Reader
+	var filesToClose []*os.File
+
 	defer func() {
-		f.Close()
-		if !success {
-			os.Remove(tempCache)
+		for _, f := range filesToClose {
+			f.Close()
 		}
 	}()
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	writer := bufio.NewWriter(f)
-
-	successCount := 0
-	notModifiedCount := 0
-
-	for _, url := range DefaultLists {
+	for i, url := range DefaultLists {
+		cachePath := filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", i))
+		
 		req, _ := http.NewRequest("GET", url, nil)
 		if state, ok := stateMap[url]; ok {
 			if state.ETag != "" {
@@ -96,65 +83,69 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("Failed to fetch %s: %v", url, err)
+			if f, err := os.Open(cachePath); err == nil {
+				readers = append(readers, f)
+				filesToClose = append(filesToClose, f)
+			}
 			continue
 		}
 
 		if resp.StatusCode == http.StatusNotModified {
 			resp.Body.Close()
-			notModifiedCount++
-			successCount++
+			if f, err := os.Open(cachePath); err == nil {
+				readers = append(readers, f)
+				filesToClose = append(filesToClose, f)
+			}
 			continue
 		}
 
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
 			log.Printf("Failed to fetch %s, status code: %d", url, resp.StatusCode)
+			if f, err := os.Open(cachePath); err == nil {
+				readers = append(readers, f)
+				filesToClose = append(filesToClose, f)
+			}
 			continue
 		}
 
+		tempCache := cachePath + ".tmp"
+		f, err := os.Create(tempCache)
+		if err != nil {
+			resp.Body.Close()
+			continue
+		}
+
+		writer := bufio.NewWriter(f)
 		parser := &PiHoleParser{}
 		parser.Parse(resp.Body, func(domain string) {
 			writer.WriteString(domain + "\n")
 		})
+		writer.Flush()
+		f.Close()
 		resp.Body.Close()
+
+		os.Rename(tempCache, cachePath)
 
 		stateMap[url] = GravityState{
 			ETag:         resp.Header.Get("ETag"),
 			LastModified: resp.Header.Get("Last-Modified"),
 		}
-		successCount++
+
+		if fRead, err := os.Open(cachePath); err == nil {
+			readers = append(readers, fRead)
+			filesToClose = append(filesToClose, fRead)
+		}
 	}
 
-	writer.Flush()
-
-	if successCount == 0 {
-		return loadCache(cachePath, r)
-	}
-
-	success = true
-	f.Close()
-
-	if notModifiedCount == len(DefaultLists) {
-		// All 304 Not Modified, touch cache and return
-		os.Remove(tempCache)
-		os.Chtimes(cachePath, time.Now(), time.Now())
-		return loadCache(cachePath, r)
-	}
-
-	os.Rename(tempCache, cachePath)
 	saveStateMap(statePath, stateMap)
 
-	return loadCache(cachePath, r)
-}
-
-func loadCache(cachePath string, r *FilterEngine) error {
-	f, err := os.Open(cachePath)
-	if err != nil {
-		return err
+	if len(readers) == 0 {
+		return errors.New("no gravity lists available")
 	}
-	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
+	multiReader := io.MultiReader(readers...)
+	scanner := bufio.NewScanner(multiReader)
 	newRoot := BuildTrieFromScanner(scanner)
 	r.UpdateRoot(newRoot)
 	return scanner.Err()
