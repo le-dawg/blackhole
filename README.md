@@ -17,7 +17,7 @@ Blackhole is fundamentally built as an ultra-low-latency DNS forwarder augmented
 2. **Dynamic Extension Chain (`forwarder.go`, `daemon.go`)**
    Traffic traverses a highly extensible `FilterChain`. Extensions and custom filters can register themselves using `GetFilters()`, enabling enterprise proxying and advanced metrics gathering without fork-bombing the core logic.
 3. **IPC Interop (`ipc_server.go`)**
-   Provides a stateless HTTP-over-Unix-socket interface that avoids legacy JSON-RPC and transient `/tmp` socket bugs, binding securely to `/var/run/blackholed.sock`.
+   Provides a stateless HTTP-over-Unix-socket interface that avoids legacy JSON-RPC and transient `/tmp` socket bugs, binding securely to `/var/run/blackhole.sock`.
 4. **App-Aware Exclusions (`process_monitor.go`, `exclusions.go`)**
    Taps into macOS-native APIs (like `lsof` and process inspection) to allow bypass rules per-app (e.g., allowlisting Slack while blocking ads everywhere else).
 

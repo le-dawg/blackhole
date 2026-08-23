@@ -13,15 +13,46 @@ type Filter interface {
 ```
 
 When a DNS request arrives, it is passed through the `FilterChain`.
-- If a filter determines the request should be blocked, it sets `block = true` and returns a synthesized `resp` byte slice.
+- If a filter determines the request should be blocked, it sets `block = true` and returns a synthesized `resp` byte slice (e.g., returning 0.0.0.0).
 - If `err != nil`, the chain aborts.
 - If all filters pass, the request is forwarded to upstream servers via `RaceForward`.
 
-To append a custom filter, implement the `Filter` interface and register it via `RegisterFilter(f Filter)`. `daemon.go` appends these to the active chain using `GetFilters()`.
+### Using `RegisterFilter` in a Custom `main.go`
+
+Instead of manually editing `daemon.go`, you can create a custom `main.go` that imports Blackhole and registers your custom filter before starting the daemon. The daemon will automatically append registered filters to the active chain using `GetFilters()`.
+
+```go
+package main
+
+import (
+    "log"
+    "github.com/blackhole/blackhole/src/dnsd"
+)
+
+// 1. Define your custom filter
+type MyCustomFilter struct {}
+
+func (f MyCustomFilter) Process(req []byte) (resp []byte, block bool, err error) {
+    // Custom filter logic here
+    // e.g., block specific requests and return synthesized DNS response
+    return nil, false, nil
+}
+
+func main() {
+    // 2. Register your custom filter globally
+    dnsd.RegisterFilter(MyCustomFilter{})
+
+    // 3. Start the daemon as usual
+    cfg := dnsd.DefaultConfig()
+    daemon := dnsd.NewDaemon(cfg)
+    
+    // setup context and start the daemon...
+}
+```
 
 ## Blocklist Parser Interface
 
-By default, Blackhole supports standard hosts files and Pi-hole gravity lists. To support proprietary or custom threat feed formats, implement the `ListParser` interface:
+By default, Blackhole supports standard hosts files and Pi-hole gravity lists. To support proprietary or custom threat feed formats (e.g., YAML-based enterprise feeds), you can implement the `ListParser` interface:
 
 ```go
 type ListParser interface {
@@ -29,13 +60,16 @@ type ListParser interface {
 }
 ```
 
+Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. You can then swap out `PiHoleParser` in `gravity.go` with your custom parser implementation.
+
 ## IPC API
 
-Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC). This API allows external tools to interact with the running daemon dynamically.
+Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC), defined in `ipc_server.go`. This API allows external tools to interact with the running daemon without modifying its configuration files or restarting it.
 
-**Important Note:** The daemon uses REST/HTTP over a Unix socket, typically located at `/var/run/blackholed.sock` (NOT `/tmp/` and NOT JSON-RPC). 
+**Important Note:** The daemon uses REST/HTTP over a Unix socket, typically located at `/var/run/blackhole.sock` (NOT `/tmp/` and NOT JSON-RPC).
 
 ### Capabilities:
-- **Telemetry and Metrics:** Stream real-time DNS query logs, latency metrics, and block rates.
-- **Dynamic Allowlisting/Blocklisting:** Add or remove domains from the active lists.
-- **State Management:** Pause or resume filtering dynamically.
+- **Telemetry and Metrics (`/stats`, `/queries`):** Stream real-time DNS query logs, latency metrics, and block rates.
+- **State Management (`/pause`):** Pause or resume filtering dynamically.
+
+To use the IPC API, connect to the socket file specified in your daemon configuration (typically `/var/run/blackhole.sock`) and send HTTP payloads as defined in the IPC handlers.
