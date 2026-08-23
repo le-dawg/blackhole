@@ -28,7 +28,7 @@ func TestGravitySync(t *testing.T) {
 		t.Error("ads.test.com should be blocked after gravity sync")
 	}
 	
-	if _, err := os.Stat(filepath.Join(dir, "gravity.cache")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "gravity-0.cache")); os.IsNotExist(err) {
 		t.Error("gravity.cache should have been created")
 	}
 }
