@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -166,9 +167,20 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		writer := bufio.NewWriter(f)
 		parserMu.RLock()
 		var parser ListParser = &PiHoleParser{}
-		for prefix, p := range parsersMap {
+		
+		var prefixes []string
+		for prefix := range parsersMap {
+			prefixes = append(prefixes, prefix)
+		}
+		
+		// Sort prefixes by length descending to match the longest prefix
+		sort.Slice(prefixes, func(i, j int) bool {
+			return len(prefixes[i]) > len(prefixes[j])
+		})
+
+		for _, prefix := range prefixes {
 			if strings.HasPrefix(url, prefix) {
-				parser = p
+				parser = parsersMap[prefix]
 				break
 			}
 		}

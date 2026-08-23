@@ -108,7 +108,7 @@ func (m *mockParser) Parse(r io.Reader, onDomain func(string)) error {
 	return nil
 }
 
-func TestSetParser_CustomParserExecution(t *testing.T) {
+func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("dummy data"))
 	}))

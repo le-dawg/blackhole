@@ -16,6 +16,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var (
+	ErrUnauthorizedUID = errors.New("unauthorized UID")
+	ErrUnauthorizedIPC = errors.New("unauthorized ipc access")
+)
+
 type AuthenticatedUnixListener struct {
 	*net.UnixListener
 	AllowedUIDs []uint32
@@ -66,13 +71,21 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 		}
 
 		if !allowed {
-			authErr = errors.New("unauthorized UID")
+			authErr = ErrUnauthorizedUID
 		}
 	})
 
-	if err != nil || authErr != nil {
+	if err != nil {
 		conn.Close()
-		return nil, errors.New("unauthorized ipc access")
+		return nil, ErrUnauthorizedIPC
+	}
+	
+	if authErr != nil {
+		conn.Close()
+		if errors.Is(authErr, ErrUnauthorizedUID) {
+			return nil, authErr
+		}
+		return nil, ErrUnauthorizedIPC
 	}
 
 	return conn, nil

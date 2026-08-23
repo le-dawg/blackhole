@@ -2,6 +2,7 @@ package dnsd
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -144,8 +145,8 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 		t.Fatalf("expected Accept to fail due to unauthorized UID rejection, but it succeeded")
 	}
 
-	// Explicitly prove the peer-credential auth branch fired
-	if err.Error() != "unauthorized ipc access" {
-		t.Errorf("expected error \"unauthorized ipc access\", got: %v", err)
+	// Explicitly prove the peer-credential auth branch fired using errors.Is
+	if !errors.Is(err, ErrUnauthorizedUID) {
+		t.Errorf("expected error ErrUnauthorizedUID, got: %v", err)
 	}
 }
