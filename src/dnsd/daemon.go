@@ -84,6 +84,13 @@ func (d *Daemon) Start(ctx context.Context) error {
 		if err := os.Chmod(d.config.SocketPath, 0600); err != nil {
 			log.Printf("Warning: failed to chmod IPC socket: %v", err)
 		}
+		if consoleStat, err := os.Stat("/dev/console"); err == nil {
+			if sysStat, ok := consoleStat.Sys().(*syscall.Stat_t); ok {
+				if err := os.Chown(d.config.SocketPath, int(sysStat.Uid), int(sysStat.Gid)); err != nil {
+					log.Printf("Warning: failed to chown IPC socket: %v", err)
+				}
+			}
+		}
 		_, err = StartIPCServer(ipcListener, rb, stats)
 		if err != nil {
 			log.Printf("Warning: Failed to start IPC server: %v", err)

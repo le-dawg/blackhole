@@ -36,9 +36,32 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 
 	// Bailiwick check logic here
 	qNameStr := q.Name.String()
+	
+	// Pass 1: Build the CNAME chain
+	validNames := make(map[string]bool)
+	validNames[qNameStr] = true
+
+	changed := true
+	for changed {
+		changed = false
+		for _, ans := range resp.Answers {
+			ansName := ans.Header.Name.String()
+			if validNames[ansName] {
+				if cname, ok := ans.Body.(*dnsmessage.CNAMEResource); ok {
+					target := cname.CNAME.String()
+					if !validNames[target] {
+						validNames[target] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 2: Validate all answers are in the valid names map
 	for _, ans := range resp.Answers {
 		ansName := ans.Header.Name.String()
-		if ansName != qNameStr && !strings.HasSuffix(ansName, "."+qNameStr) {
+		if !validNames[ansName] && !strings.HasSuffix(ansName, "."+qNameStr) {
 			return errors.New("bailiwick mismatch")
 		}
 	}
