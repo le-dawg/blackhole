@@ -1,6 +1,7 @@
 package dnsd
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,7 @@ func TestGravitySync(t *testing.T) {
 
 	res := NewFilterEngine(nil)
 	
-	err := refreshGravity(dir, res)
+	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +85,7 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 
 	res := NewFilterEngine(nil)
 	
-	err := refreshGravity(dir, res)
+	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatalf("Expected successful update, got error: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 	RegisterParserForURL(server.URL, customParser)
 
 	res := NewFilterEngine(nil)
-	err := refreshGravity(dir, res)
+	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatalf("Unexpected error during parsing: %v", err)
 	}
@@ -156,7 +157,7 @@ func TestRegisterParserForURL_LongestPrefixMatch(t *testing.T) {
 	RegisterParserForURL(server.URL+"/list/", longParser)
 
 	res := NewFilterEngine(nil)
-	err := refreshGravity(dir, res)
+	err := refreshGravity(context.Background(), dir, res)
 	if err != nil {
 		t.Fatalf("Unexpected error during parsing: %v", err)
 	}

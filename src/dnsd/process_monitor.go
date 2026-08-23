@@ -403,16 +403,18 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 // to its originating Process Name, Bundle ID (if applicable), and PID.
 func GetProcessInfoForPort(port uint16, patterns []string) (string, string, error) {
 	cache := portToPIDCache.Load()
-	if entry, found := cache.Mappings[port]; found {
-		ttl := 5 * time.Second
-		if entry.err != nil {
-			ttl = 2 * time.Second
-		}
-		if time.Since(entry.createdAt) < ttl {
+	if cache != nil {
+		if entry, found := cache.Mappings[port]; found {
+			ttl := 5 * time.Second
 			if entry.err != nil {
-				return "", "", entry.err
+				ttl = 2 * time.Second
 			}
-			return getMetadataForPID(entry.pid, patterns)
+			if time.Since(entry.createdAt) < ttl {
+				if entry.err != nil {
+					return "", "", entry.err
+				}
+				return getMetadataForPID(entry.pid, patterns)
+			}
 		}
 	}
 
