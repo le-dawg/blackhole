@@ -90,6 +90,17 @@ Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
 **Error Codes:**
 - `405 Method Not Allowed`: If a method other than GET is used.
 
+**StatsSnapshot Schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `total` | Integer | Total number of queries processed |
+| `blocked` | Integer | Number of queries blocked |
+| `blockPercent` | Float | Percentage of queries blocked |
+| `topDomains` | Object | Map of top requested domains to query counts |
+| `topApps` | Object | Map of top requesting app process names to query counts |
+| `windowStart` | String | ISO-8601 timestamp of when the current aggregation window started |
+
 **Example Response:**
 ```json
 {
@@ -101,8 +112,8 @@ Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
     "tracker.example.com": 50
   },
   "topApps": {
-    "com.apple.Safari": 120,
-    "com.google.Chrome": 80
+    "Google Chrome": 120,
+    "Spotify": 80
   },
   "windowStart": "2026-08-22T22:11:51Z"
 }
@@ -151,8 +162,13 @@ Pauses DNS filtering dynamically for a specified duration.
 **Content-Type:** `application/json`
 
 **Error Codes:**
-- `405 Method Not Allowed`: If a method other than POST is used.
-- `400 Bad Request`: If the JSON payload is malformed or missing required fields.
+- `405 Method Not Allowed`: If called with any HTTP method other than `POST`.
+- `400 Bad Request`: If the request body contains malformed or unparseable JSON.
+
+**Request Behavior:**
+- Passing `"durationSeconds": <int > 0>` pauses blocking protection for that duration.
+- Passing `"durationSeconds": 0`, a negative value, or `{}` unpauses and resumes protection immediately.
+- Successful requests return status `200 OK` with JSON body `{"ok": true}` and `Content-Type: application/json`.
 
 **Example Request Payload:**
 ```json

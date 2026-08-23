@@ -57,8 +57,13 @@ The service exposes the following Inter-Process Communication (IPC) endpoints fo
 Temporarily pauses the service or specific subsystems for a given duration.
 
 **Error Codes:**
-- `405 Method Not Allowed`: If a method other than POST is used.
-- `400 Bad Request`: If the JSON payload is malformed or missing required fields.
+- `405 Method Not Allowed`: If called with any HTTP method other than `POST`.
+- `400 Bad Request`: If the request body contains malformed or unparseable JSON.
+
+**Request Behavior:**
+- Passing `"durationSeconds": <int > 0>` pauses blocking protection for that duration.
+- Passing `"durationSeconds": 0`, a negative value, or `{}` unpauses and resumes protection immediately.
+- Successful requests return status `200 OK` with JSON body `{"ok": true}` and `Content-Type: application/json`.
 
 **Request Payload (JSON):**
 ```json
@@ -69,6 +74,7 @@ Temporarily pauses the service or specific subsystems for a given duration.
 
 **Response Payload (JSON):**
 `HTTP 200 OK`
+**Content-Type:** `application/json`
 
 ```json
 {
@@ -80,9 +86,21 @@ Temporarily pauses the service or specific subsystems for a given duration.
 `GET /stats`
 
 Retrieves current operational metrics and statistics.
+**Content-Type:** `application/json`
 
 **Error Codes:**
 - `405 Method Not Allowed`: If a method other than GET is used.
+
+**StatsSnapshot Schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `total` | Integer | Total number of queries processed |
+| `blocked` | Integer | Number of queries blocked |
+| `blockPercent` | Float | Percentage of queries blocked |
+| `topDomains` | Object | Map of top requested domains to query counts |
+| `topApps` | Object | Map of top requesting app process names to query counts |
+| `windowStart` | String | ISO-8601 timestamp of when the current aggregation window started |
 
 **Response Payload (JSON):**
 ```json
