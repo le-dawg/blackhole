@@ -127,8 +127,7 @@ func refreshGravity(dir string, r *FilterEngine) error {
 		var writeErr error
 		parseErr := parser.Parse(resp.Body, func(domain string) {
 			if writeErr == nil {
-				if _, err := writer.WriteString(domain + "
-"); err != nil {
+				if _, err := writer.WriteString(domain + "\n"); err != nil {
 					writeErr = err
 				}
 			}
