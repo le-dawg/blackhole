@@ -87,6 +87,9 @@ Blackhole exposes a Unix domain socket for Inter-Process Communication (IPC), de
 Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
 **Content-Type:** `application/json`
 
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than GET is used.
+
 **Example Response:**
 ```json
 {
@@ -110,7 +113,25 @@ Returns aggregated telemetry, metrics, and block rates over the past 24 hours.
 Returns a stream of recent DNS query logs.
 **Content-Type:** `application/x-ndjson`
 
+**Snapshot Semantics:**
+This endpoint outputs a point-in-time snapshot of the circular ring buffer as NDJSON and closes the connection upon completion.
+
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than GET is used.
+
 This endpoint returns a newline-delimited JSON stream where each line is a `QueryRecord` object.
+
+**QueryRecord Schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | String | ISO-8601 timestamp of the query |
+| `domain` | String | The requested domain name |
+| `queryType` | Integer | DNS query type (e.g., 1 for A, 28 for AAAA) |
+| `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`) |
+| `processName` | String | Name of the process making the query |
+| `bundleId` | String | Bundle identifier of the app making the query |
+| `latencyMs` | Float | Resolution latency in milliseconds |
 
 The daemon emits the following status values:
 - `Allowed`: Normal DNS resolution via configured upstreams.
@@ -128,6 +149,10 @@ The daemon emits the following status values:
 
 Pauses DNS filtering dynamically for a specified duration.
 **Content-Type:** `application/json`
+
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than POST is used.
+- `400 Bad Request`: If the JSON payload is malformed or missing required fields.
 
 **Example Request Payload:**
 ```json

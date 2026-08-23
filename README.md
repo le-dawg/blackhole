@@ -56,6 +56,10 @@ The service exposes the following Inter-Process Communication (IPC) endpoints fo
 
 Temporarily pauses the service or specific subsystems for a given duration.
 
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than POST is used.
+- `400 Bad Request`: If the JSON payload is malformed or missing required fields.
+
 **Request Payload (JSON):**
 ```json
 {
@@ -76,6 +80,9 @@ Temporarily pauses the service or specific subsystems for a given duration.
 `GET /stats`
 
 Retrieves current operational metrics and statistics.
+
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than GET is used.
 
 **Response Payload (JSON):**
 ```json
@@ -99,6 +106,24 @@ Retrieves current operational metrics and statistics.
 `GET /queries`
 
 Retrieves a snapshot of recent DNS queries in newline-delimited JSON (NDJSON) format.
+
+**Snapshot Semantics:**
+This endpoint outputs a point-in-time snapshot of the circular ring buffer as NDJSON and closes the connection upon completion.
+
+**Error Codes:**
+- `405 Method Not Allowed`: If a method other than GET is used.
+
+**QueryRecord Schema:**
+
+| Field | Type | Description |
+|---|---|---|
+| `timestamp` | String | ISO-8601 timestamp of the query |
+| `domain` | String | The requested domain name |
+| `queryType` | Integer | DNS query type (e.g., 1 for A, 28 for AAAA) |
+| `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`) |
+| `processName` | String | Name of the process making the query |
+| `bundleId` | String | Bundle identifier of the app making the query |
+| `latencyMs` | Float | Resolution latency in milliseconds |
 
 The daemon emits the following status values:
 - `Allowed`: Normal DNS resolution via configured upstreams.
