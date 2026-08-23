@@ -59,10 +59,9 @@ Temporarily pauses the service or specific subsystems for a given duration.
 **Request Payload (JSON):**
 ```json
 {
-  "duration": "300s" 
+  "durationSeconds": 300
 }
 ```
-*(Duration can be specified in seconds `s`, minutes `m`, or hours `h`)*
 
 ### Get Statistics
 `GET /stats`
@@ -72,9 +71,17 @@ Retrieves current operational metrics and statistics.
 **Response Payload (JSON):**
 ```json
 {
-  "status": "active",
-  "domains_blocked": 10452,
-  "queries_processed": 54210,
-  "uptime_seconds": 86400
+  "total": 54210,
+  "blocked": 10452,
+  "blockPercent": 19.28,
+  "topDomains": [
+    "ads.example.com",
+    "tracker.example.com"
+  ],
+  "topApps": [
+    "Google Chrome",
+    "Spotify"
+  ],
+  "windowStart": 1692800000
 }
 ```
