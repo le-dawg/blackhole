@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -30,6 +31,7 @@ func NewDaemon(cfg Config) *Daemon {
 }
 
 func (d *Daemon) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
 	exclusionManager, err := StartExclusionWatcher(d.config.ExclusionsPath)
 	if err != nil {
 		return err
@@ -71,9 +73,9 @@ func (d *Daemon) Start(ctx context.Context) error {
 	defer conn.Close()
 	log.Printf("Blackhole DNS server listening on 127.0.0.1:%d...", d.config.Port)
 
-	go d.handleSignals(conn)
 
 	rb := NewRingBuffer(1000)
+	var ipcServer *http.Server
 	stats := NewGlobalStats()
 
 	os.Remove(d.config.SocketPath)
@@ -91,24 +93,42 @@ func (d *Daemon) Start(ctx context.Context) error {
 				}
 			}
 		}
-		_, err = StartIPCServer(ipcListener, rb, stats)
+		ipcServer, err = StartIPCServer(ipcListener, rb, stats)
 		if err != nil {
 			log.Printf("Warning: Failed to start IPC server: %v", err)
 		}
 	}
 
+	go d.handleSignals(ctx, cancel, conn, ipcServer)
 	d.runMessageLoop(conn, exclusionManager, r, rb, stats)
 	return nil
 }
 
-func (d *Daemon) handleSignals(conn *net.UDPConn) {
+func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelFunc, conn *net.UDPConn, ipcServer *http.Server) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	sig := <-sigChan
-	log.Printf("Received signal %v. Cleaning up...", sig)
+	
+	select {
+	case sig := <-sigChan:
+		log.Printf("Received signal %v. Cleaning up...", sig)
+	case <-ctx.Done():
+		log.Printf("Context cancelled. Cleaning up...")
+	}
+	
 	StopVPNMonitor()
+	
+	// Gracefully shut down the IPC HTTP server if it's running
+	if ipcServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		ipcServer.Shutdown(shutdownCtx)
+	}
+	
+	// Close the UDP Listener
 	conn.Close()
-	os.Exit(0)
+	
+	// Ensure the parent context cancels down the tree
+	cancel()
 }
 
 func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {

@@ -93,6 +93,10 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(stats.Snapshot()); err != nil {
 			log.Printf("IPC Encode error (stats): %v", err)
@@ -111,6 +115,10 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 	})
 
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		var req struct {
 			DurationSeconds int `json:"durationSeconds"`
 		}

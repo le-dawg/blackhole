@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -30,11 +29,11 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 
 	q := req.Questions[0]
 	rq := resp.Questions[0]
-	if q.Name != rq.Name || q.Type != rq.Type {
-		return errors.New("qname/qtype mismatch")
+	// FIX: Explicitly check QCLASS in addition to Name and Type
+	if q.Name != rq.Name || q.Type != rq.Type || q.Class != rq.Class {
+		return errors.New("qname/qtype/qclass mismatch")
 	}
 
-	// Bailiwick check logic here
 	qNameStr := q.Name.String()
 	
 	// Pass 1: Build the CNAME chain
@@ -58,10 +57,11 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 	}
 
-	// Pass 2: Validate all answers are in the valid names map
+	// Pass 2: Strict validation that all answers are in the valid names map
+	// FIX: Removed the loose strings.HasSuffix check
 	for _, ans := range resp.Answers {
 		ansName := ans.Header.Name.String()
-		if !validNames[ansName] && !strings.HasSuffix(ansName, "."+qNameStr) {
+		if !validNames[ansName] {
 			return errors.New("bailiwick mismatch")
 		}
 	}
