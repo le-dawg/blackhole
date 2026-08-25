@@ -28,6 +28,7 @@ type ExclusionManager struct {
 	closeOnce     sync.Once
 	debounceTimer *time.Timer
 	timerMu       sync.Mutex
+	reloadWg      sync.WaitGroup
 }
 
 func StartExclusionWatcher(path string) (*ExclusionManager, error) {
@@ -94,6 +95,9 @@ func StartExclusionWatcher(path string) (*ExclusionManager, error) {
 }
 
 func (em *ExclusionManager) reload() {
+	em.reloadWg.Add(1)
+	defer em.reloadWg.Done()
+
 	data, err := os.ReadFile(em.path)
 	if err != nil {
 		return
@@ -152,6 +156,7 @@ func (em *ExclusionManager) Close() error {
 			em.debounceTimer = nil
 		}
 		em.timerMu.Unlock()
+		em.reloadWg.Wait()
 		err = em.watcher.Close()
 	})
 	return err

@@ -206,4 +206,65 @@ func TestValidateDNSResponse_CNAMEAndBailiwick(t *testing.T) {
 	if err := validateDNSResponse(reqRaw, validOptRaw); err != nil {
 		t.Fatalf("expected valid OPT additionals to pass, got: %v", err)
 	}
+
+	// 6. Authorized MX Target in Additional section
+	mxResp := req
+	mxResp.Header.Response = true
+	mxResp.Answers = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("target.example.com."),
+				Type:  dnsmessage.TypeMX,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.MXResource{
+				Pref: 10,
+				MX:   dnsmessage.MustNewName("mail.target.example.com."),
+			},
+		},
+	}
+	mxResp.Additionals = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("mail.target.example.com."),
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 1}},
+		},
+	}
+	mxRaw, _ := mxResp.Pack()
+	if err := validateDNSResponse(reqRaw, mxRaw); err != nil {
+		t.Fatalf("expected valid MX glue to pass, got: %v", err)
+	}
+
+	// 7. Conflicting CNAME owners should fail
+	cnameConflictResp := req
+	cnameConflictResp.Header.Response = true
+	cnameConflictResp.Answers = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("target.example.com."),
+				Type:  dnsmessage.TypeCNAME,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("alias1.target.example.com.")},
+		},
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("target.example.com."),
+				Type:  dnsmessage.TypeCNAME,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.CNAMEResource{CNAME: dnsmessage.MustNewName("alias2.target.example.com.")},
+		},
+	}
+	cnameConflictRaw, _ := cnameConflictResp.Pack()
+	if err := validateDNSResponse(reqRaw, cnameConflictRaw); err == nil {
+		t.Fatalf("expected conflicting CNAME records to fail")
+	}
 }

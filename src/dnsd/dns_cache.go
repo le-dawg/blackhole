@@ -3,6 +3,7 @@ package dnsd
 import (
 	"container/list"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -33,8 +34,8 @@ func NewDNSCache(max int) *DNSCache {
 	}
 }
 
-func cacheKey(qname string, qtype, qclass uint16) string {
-	return fmt.Sprintf("%s|%d|%d", qname, qtype, qclass)
+func cacheKey(qname string, qtype, qclass uint16, cd, ad bool) string {
+	return fmt.Sprintf("%s|%d|%d|%t|%t", qname, qtype, qclass, cd, ad)
 }
 
 func cloneResource(r dnsmessage.Resource) dnsmessage.Resource {
@@ -76,6 +77,11 @@ func cloneResource(r dnsmessage.Resource) dnsmessage.Resource {
 			body.Options[i] = optCopy
 		}
 		resCopy.Body = &body
+	case *dnsmessage.UnknownResource:
+		body := *b
+		body.Data = make([]byte, len(b.Data))
+		copy(body.Data, b.Data)
+		resCopy.Body = &body
 	}
 	return resCopy
 }
@@ -107,11 +113,11 @@ func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
 	return &msgCopy
 }
 
-func (c *DNSCache) Get(qname string, qtype, qclass uint16) (*dnsmessage.Message, bool) {
+func (c *DNSCache) Get(qname string, qtype, qclass uint16, cd, ad bool) (*dnsmessage.Message, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype, qclass)
+	key := cacheKey(qname, qtype, qclass, cd, ad)
 	elem, ok := c.entries[key]
 	if !ok {
 		return nil, false
@@ -151,7 +157,7 @@ func (c *DNSCache) Get(qname string, qtype, qclass uint16) (*dnsmessage.Message,
 	return msgCopy, true
 }
 
-func (c *DNSCache) Set(qname string, qtype, qclass uint16, msg *dnsmessage.Message) {
+func (c *DNSCache) Set(qname string, qtype, qclass uint16, cd, ad bool, msg *dnsmessage.Message) {
 	if len(msg.Answers) == 0 {
 		return
 	}
@@ -159,25 +165,47 @@ func (c *DNSCache) Set(qname string, qtype, qclass uint16, msg *dnsmessage.Messa
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype, qclass)
+	key := cacheKey(qname, qtype, qclass, cd, ad)
 
-	var minTTL uint32 = 0
+	var minTTL uint32 = math.MaxUint32
+	hasNonZeroTTL := false
+
 	for _, ans := range msg.Answers {
 		if ans.Header.Type != dnsmessage.TypeOPT {
-			if minTTL == 0 || ans.Header.TTL < minTTL {
+			if ans.Header.TTL == 0 {
+				return // Zero-TTL records must not be cached (RFC 1035 / RFC 2181)
+			}
+			if ans.Header.TTL < minTTL {
 				minTTL = ans.Header.TTL
+				hasNonZeroTTL = true
 			}
 		}
 	}
 	for _, auth := range msg.Authorities {
 		if auth.Header.Type != dnsmessage.TypeOPT {
-			if minTTL == 0 || auth.Header.TTL < minTTL {
+			if auth.Header.TTL == 0 {
+				return
+			}
+			if auth.Header.TTL < minTTL {
 				minTTL = auth.Header.TTL
+				hasNonZeroTTL = true
 			}
 		}
 	}
-	if minTTL == 0 {
-		minTTL = 60
+	for _, add := range msg.Additionals {
+		if add.Header.Type != dnsmessage.TypeOPT {
+			if add.Header.TTL == 0 {
+				return
+			}
+			if add.Header.TTL < minTTL {
+				minTTL = add.Header.TTL
+				hasNonZeroTTL = true
+			}
+		}
+	}
+
+	if !hasNonZeroTTL || minTTL == 0 {
+		return
 	}
 
 	now := time.Now()

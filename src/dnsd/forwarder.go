@@ -55,7 +55,12 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 	cnameMap := make(map[string]string)
 	for _, ans := range resp.Answers {
 		if cname, ok := ans.Body.(*dnsmessage.CNAMEResource); ok {
-			cnameMap[strings.ToLower(ans.Header.Name.String())] = strings.ToLower(cname.CNAME.String())
+			owner := strings.ToLower(ans.Header.Name.String())
+			target := strings.ToLower(cname.CNAME.String())
+			if existingTarget, exists := cnameMap[owner]; exists && existingTarget != target {
+				return errors.New("conflicting cname records for same owner")
+			}
+			cnameMap[owner] = target
 		}
 	}
 
@@ -72,6 +77,11 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 		validNames[next] = true
 		curr = next
+		if hop == 7 {
+			if _, hasFurther := cnameMap[curr]; hasFurther {
+				return errors.New("cname chain exceeds 8 hops")
+			}
+		}
 	}
 
 	// Validate Answer records are on the CNAME graph path
@@ -82,25 +92,41 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 	}
 
-	// Validate Authority records are within zone bailiwick
-	authorityNS := make(map[string]bool)
+	validAdditionalNames := make(map[string]bool)
+	for k := range validNames {
+		validAdditionalNames[k] = true
+	}
+
+	// Validate Authority records are within zone bailiwick & collect authorized NS targets
 	for _, auth := range resp.Authorities {
 		authName := strings.ToLower(auth.Header.Name.String())
 		if !isZoneBailiwick(qNameStr, authName) {
 			return errors.New("bailiwick mismatch: authority record out of zone")
 		}
 		if ns, ok := auth.Body.(*dnsmessage.NSResource); ok {
-			authorityNS[strings.ToLower(ns.NS.String())] = true
+			validAdditionalNames[strings.ToLower(ns.NS.String())] = true
 		}
 	}
 
-	// Validate Additional records (except OPT) match CNAME path or authoritative NS glue
+	// Authorize MX, SRV, and NS targets from the Answer section
+	for _, ans := range resp.Answers {
+		switch b := ans.Body.(type) {
+		case *dnsmessage.MXResource:
+			validAdditionalNames[strings.ToLower(b.MX.String())] = true
+		case *dnsmessage.SRVResource:
+			validAdditionalNames[strings.ToLower(b.Target.String())] = true
+		case *dnsmessage.NSResource:
+			validAdditionalNames[strings.ToLower(b.NS.String())] = true
+		}
+	}
+
+	// Validate Additional records (except OPT) match CNAME path or authoritative targets
 	for _, add := range resp.Additionals {
 		if add.Header.Type == dnsmessage.TypeOPT {
 			continue // EDNS0 OPT record is allowed
 		}
 		addName := strings.ToLower(add.Header.Name.String())
-		if !validNames[addName] && !authorityNS[addName] {
+		if !validAdditionalNames[addName] {
 			return errors.New("bailiwick mismatch: untrusted additional record")
 		}
 	}
@@ -111,6 +137,9 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 func isZoneBailiwick(qname, zone string) bool {
 	qname = strings.TrimSuffix(strings.ToLower(qname), ".")
 	zone = strings.TrimSuffix(strings.ToLower(zone), ".")
+	if zone == "" || qname == "" {
+		return false
+	}
 	if qname == zone {
 		return true
 	}

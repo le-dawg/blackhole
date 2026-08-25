@@ -26,9 +26,9 @@ func TestDNSCache(t *testing.T) {
 		},
 	}
 
-	cache.Set("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg)
+	cache.Set("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false, msg)
 
-	cachedMsg, hit := cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET))
+	cachedMsg, hit := cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false)
 	if !hit {
 		t.Fatal("expected cache hit")
 	}
@@ -36,12 +36,44 @@ func TestDNSCache(t *testing.T) {
 		t.Fatal("expected 1 answer")
 	}
 
-	// Test eviction
-	cache.Set("example2.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg)
-	cache.Set("example3.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg) // Should evict example.com
+	// CD flag mismatch should miss
+	_, hit = cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), true, false)
+	if hit {
+		t.Fatal("expected cache miss for different CD flag")
+	}
 
-	_, hit = cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET))
+	// Test eviction
+	cache.Set("example2.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false, msg)
+	cache.Set("example3.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false, msg) // Should evict example.com
+
+	_, hit = cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false)
 	if hit {
 		t.Fatal("expected example.com. to be evicted")
+	}
+}
+
+func TestDNSCache_ZeroTTLNotCached(t *testing.T) {
+	cache := NewDNSCache(2)
+	msg := &dnsmessage.Message{
+		Header: dnsmessage.Header{
+			Response: true,
+		},
+		Answers: []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{
+					Name:  dnsmessage.MustNewName("zero.example.com."),
+					Type:  dnsmessage.TypeA,
+					Class: dnsmessage.ClassINET,
+					TTL:   0,
+				},
+				Body: &dnsmessage.AResource{A: [4]byte{1, 2, 3, 4}},
+			},
+		},
+	}
+
+	cache.Set("zero.example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false, msg)
+	_, hit := cache.Get("zero.example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), false, false)
+	if hit {
+		t.Fatal("expected 0-TTL response NOT to be cached")
 	}
 }

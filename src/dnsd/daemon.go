@@ -167,6 +167,9 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFu
 		log.Printf("Context cancelled. Cleaning up...")
 	}
 
+	// Cancel root context first to signal worker queue drain in runMessageLoop
+	cancel(nil)
+
 	StopVPNMonitor()
 	StopProcessMonitor()
 
@@ -176,12 +179,6 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFu
 		defer shutdownCancel()
 		_ = ipcServer.Shutdown(shutdownCtx)
 	}
-
-	// Close the UDP Listener
-	conn.Close()
-
-	// Ensure the parent context cancels down the tree
-	cancel(nil)
 }
 
 func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
@@ -191,7 +188,25 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 		return
 	}
 
-	if len(msg.Questions) == 0 {
+	if len(msg.Questions) != 1 {
+		msg.Header.Response = true
+		msg.Header.RCode = dnsmessage.RCodeFormatError
+		msg.Answers = nil
+		msg.Authorities = nil
+		msg.Additionals = nil
+		if packed, err := msg.Pack(); err == nil {
+			_, _ = conn.WriteToUDP(packed, cliAddr)
+		}
+		stats.Increment(false, "", "Unknown")
+		rb.Push(QueryRecord{
+			Timestamp:   time.Now(),
+			Domain:      "",
+			QueryType:   0,
+			Status:      "Servfail",
+			ProcessName: "Unknown",
+			BundleID:    "",
+			LatencyMs:   0,
+		})
 		return
 	}
 
@@ -235,17 +250,18 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 	} else {
 		chain = append(FilterChain{r}, GetFilters()...)
 
-		// Evaluate the full FilterChain *before* recording stats
 		respRaw, block, err := chain.Process(payload)
-		if block || err != nil {
+		if err != nil {
+			status = "Servfail"
+			log.Printf("FILTER ERROR domain='%s' client=%s err=%v", domain, cliAddr.String(), err)
+			d.sendServfail(conn, cliAddr, payload)
+		} else if block {
 			status = "Blocked"
-			if err != nil {
-				log.Printf("BLOCKED (error) domain='%s' client=%s err=%v", domain, cliAddr.String(), err)
-			} else {
-				log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
-			}
+			log.Printf("BLOCKED domain='%s' client=%s", domain, cliAddr.String())
 			if respRaw != nil {
 				_, _ = conn.WriteToUDP(respRaw, cliAddr)
+			} else {
+				sendBlockedResponse(msg, cliAddr, conn)
 			}
 		} else {
 			if !d.forwardQuery(payload, cliAddr, conn, msg, domain, nil) {
@@ -293,13 +309,18 @@ func (d *Daemon) runMessageLoop(ctx context.Context, conn *net.UDPConn, exclusio
 
 	go func() {
 		<-ctx.Done()
-		_ = conn.Close()
+		_ = conn.SetReadDeadline(time.Now().Add(1 * time.Millisecond))
 	}()
 
 	for {
 		buf := make([]byte, 4096)
 		n, cliAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
+			select {
+			case <-ctx.Done():
+				goto shutdown
+			default:
+			}
 			if errors.Is(err, net.ErrClosed) {
 				break
 			}
@@ -313,13 +334,36 @@ func (d *Daemon) runMessageLoop(ctx context.Context, conn *net.UDPConn, exclusio
 		select {
 		case queryQueue <- dnsQueryJob{payload: payload, cliAddr: cliAddr}:
 		default:
-			// Overload: queue is full, return fast SERVFAIL
+			// Overload: queue is full, return fast SERVFAIL and record telemetry
 			d.sendServfail(conn, cliAddr, payload)
+			stats.Increment(false, "", "Unknown")
+			rb.Push(QueryRecord{
+				Timestamp:   time.Now(),
+				Domain:      "",
+				QueryType:   0,
+				Status:      "Servfail",
+				ProcessName: "Unknown",
+				BundleID:    "",
+				LatencyMs:   0,
+			})
 		}
 	}
 
+shutdown:
 	close(queryQueue)
-	wg.Wait()
+	drainDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drainDone)
+	}()
+
+	select {
+	case <-drainDone:
+	case <-time.After(3 * time.Second):
+		log.Printf("Worker drain timed out after 3s")
+	}
+
+	_ = conn.Close()
 }
 
 func (d *Daemon) sendServfail(conn *net.UDPConn, cliAddr *net.UDPAddr, raw []byte) {
@@ -339,7 +383,9 @@ func (d *Daemon) sendServfail(conn *net.UDPConn, cliAddr *net.UDPAddr, raw []byt
 func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) bool {
 	if len(msg.Questions) > 0 {
 		q := msg.Questions[0]
-		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type), uint16(q.Class)); ok {
+		cd := msg.Header.CheckingDisabled
+		ad := msg.Header.AuthenticData
+		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type), uint16(q.Class), cd, ad); ok {
 			cp := *cachedMsg
 			cp.Header.ID = msg.Header.ID
 			resp, err := cp.Pack()
@@ -362,7 +408,9 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 
 	var respMsg dnsmessage.Message
 	if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
-		d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), &respMsg)
+		cd := msg.Header.CheckingDisabled
+		ad := msg.Header.AuthenticData
+		d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), cd, ad, &respMsg)
 	}
 	_, _ = conn.WriteToUDP(respRaw, cliAddr)
 	return true

@@ -107,10 +107,20 @@ var (
 
 // RegisterParserForURL allows users to inject a custom parser implementation (ListParser or RuleAwareListParser) for a specific URL prefix.
 func RegisterParserForURL(urlPrefix string, p any) {
-	if p != nil {
+	if p == nil {
+		return
+	}
+	v := reflect.ValueOf(p)
+	if (v.Kind() == reflect.Chan || v.Kind() == reflect.Func || v.Kind() == reflect.Map || v.Kind() == reflect.Pointer || v.Kind() == reflect.UnsafePointer || v.Kind() == reflect.Interface || v.Kind() == reflect.Slice) && v.IsNil() {
+		return
+	}
+	switch p.(type) {
+	case ListParser, RuleAwareListParser:
 		parserMu.Lock()
 		parsersMap[urlPrefix] = p
 		parserMu.Unlock()
+	default:
+		log.Printf("Warning: RegisterParserForURL ignored unsupported parser type %T for %s", p, urlPrefix)
 	}
 }
 
@@ -265,10 +275,9 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 
 	minRules := 1
 	if cachedState.RuleCount > 10 {
-		minRules = cachedState.RuleCount / 2
-		if minRules < 1 {
-			minRules = 1
-		}
+		minRules = (cachedState.RuleCount + 1) / 2
+	} else if sourceRequiresMultipleRules(url, nil) {
+		minRules = 2
 	}
 	valid, err := cacheHasEffectiveRules(f, minRules)
 	if err != nil || !valid {
@@ -399,7 +408,31 @@ func recoverGravityArtifacts(dir string, statePath string) error {
 			return err
 		}
 		currentState := loadStateMap(statePath)
+		validNextCaches := true
 		if reflect.DeepEqual(currentState, journal.NextState) {
+			for url, st := range journal.NextState {
+				if url == gravityStateMetaKey {
+					continue
+				}
+				cPath := cachePathForURL(dir, url)
+				if cf, err := os.Open(cPath); err == nil {
+					h := sha256.New()
+					_, _ = io.Copy(h, cf)
+					_ = cf.Close()
+					if st.SHA256 != "" && hex.EncodeToString(h.Sum(nil)) != st.SHA256 {
+						validNextCaches = false
+						break
+					}
+				} else {
+					validNextCaches = false
+					break
+				}
+			}
+		} else {
+			validNextCaches = false
+		}
+
+		if validNextCaches {
 			for _, entry := range journal.Caches {
 				if err := removeFileFunc(entry.CachePath + ".bak"); err != nil && !os.IsNotExist(err) {
 					return err
@@ -656,7 +689,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		if writeErr == nil && len(uniqueBlockDomains) < minRequired {
 			writeErr = fmt.Errorf("source produced insufficient effective block rules (%d < %d)", len(uniqueBlockDomains), minRequired)
 		}
-		if writeErr == nil && stateMap[url].RuleCount > 10 && len(uniqueBlockDomains) < stateMap[url].RuleCount/2 {
+		if writeErr == nil && stateMap[url].RuleCount > 10 && len(uniqueBlockDomains) < (stateMap[url].RuleCount+1)/2 {
 			writeErr = fmt.Errorf("source suffered an unexpected rule drop from %d to %d rules", stateMap[url].RuleCount, len(uniqueBlockDomains))
 		}
 

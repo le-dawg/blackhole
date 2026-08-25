@@ -147,21 +147,23 @@ This endpoint returns a newline-delimited JSON stream where each line is a `Quer
 | `timestamp` | String | ISO-8601 timestamp of the query |
 | `domain` | String | The requested domain name |
 | `queryType` | Integer | DNS query type (e.g., 1 for A, 28 for AAAA) |
-| `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`) |
+| `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`, `Servfail`) |
 | `processName` | String | Client process executable binary path (resolved via proc_pidpath, and appended with "-[pattern]" when matched against a configured CLI pattern tag, e.g. "/Applications/Safari.app/Contents/MacOS/Safari" or "/usr/bin/python3-litellm"), or "Unknown" if resolution was dropped or unavailable |
 | `bundleId` | String | Bundle identifier of the app making the query |
 | `latencyMs` | Float | Resolution latency in milliseconds |
 
 The daemon emits the following status values:
 - `Allowed`: Normal DNS resolution via configured upstreams.
-- `Blocked`: Domain blocked and sinkholed to `0.0.0.0`.
+- `Blocked`: Domain blocked and sinkholed to `0.0.0.0` or `::`.
 - `Excluded`: Query allowed via app-specific bypass rule (process name or bundle ID).
+- `Servfail`: Upstream resolution failure, filter pipeline error, format violation, or queue overload.
 
 **Example Response Payload (Stream):**
-```json
+```ndjson
 {"timestamp":"2026-08-23T22:11:51Z","domain":"ads.example.com","queryType":1,"status":"Blocked","processName":"/Applications/Safari.app/Contents/MacOS/Safari","bundleId":"com.apple.Safari","latencyMs":1.5}
 {"timestamp":"2026-08-23T22:11:52Z","domain":"example.com","queryType":28,"status":"Allowed","processName":"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome","bundleId":"com.google.Chrome","latencyMs":12.1}
 {"timestamp":"2026-08-23T22:11:53Z","domain":"slack-msgs.com","queryType":1,"status":"Excluded","processName":"/Applications/Slack.app/Contents/MacOS/Slack","bundleId":"com.tinyspeck.slackmacgap","latencyMs":4.2}
+{"timestamp":"2026-08-23T22:11:54Z","domain":"unreachable.internal","queryType":1,"status":"Servfail","processName":"/usr/bin/curl","bundleId":"","latencyMs":501.2}
 ```
 
 ### `POST /pause`

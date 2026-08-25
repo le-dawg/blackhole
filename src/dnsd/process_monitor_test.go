@@ -38,6 +38,9 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 	addr := ln.Addr().(*net.TCPAddr)
 	port := uint16(addr.Port)
 
+	// Clear cache so this fresh port is actively scanned
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
+
 	// Get the expected executable path
 	expectedPath, err := os.Executable()
 	if err != nil {
@@ -79,6 +82,9 @@ func TestProcessCorrelationActiveUDP(t *testing.T) {
 	// Get the allocated port
 	addr := conn.LocalAddr().(*net.UDPAddr)
 	port := uint16(addr.Port)
+
+	// Clear cache so this fresh port is actively scanned
+	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	// Get the expected executable path
 	expectedPath, err := os.Executable()

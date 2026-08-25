@@ -257,6 +257,9 @@ drainLoop:
 	}
 
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
+	pidMetadataCacheMu.Lock()
+	pidMetadataCache = make(map[int]pidMetadataEntry)
+	pidMetadataCacheMu.Unlock()
 
 	// 1. Process Janitor Loop
 	processMonitorWg.Add(1)
@@ -271,15 +274,12 @@ drainLoop:
 			case <-monitorCtx.Done():
 				return
 			case <-ticker.C:
-				if monitorCtx.Err() != nil {
-					return
-				}
 				now := time.Now()
 
 				cache := portToPIDCache.Load()
 				newMappings := make(map[uint16]portPIDEntry)
 				for port, entry := range cache.Mappings {
-					ttl := 1 * time.Second
+					ttl := 1500 * time.Millisecond
 					if entry.err != nil {
 						ttl = 500 * time.Millisecond
 					}
@@ -291,7 +291,7 @@ drainLoop:
 
 				pidMetadataCacheMu.Lock()
 				for pid, entry := range pidMetadataCache {
-					if now.Sub(entry.createdAt) >= 1*time.Minute {
+					if now.Sub(entry.createdAt) >= 3*time.Second {
 						delete(pidMetadataCache, pid)
 					}
 				}
@@ -324,9 +324,9 @@ drainLoop:
 
 				cache := portToPIDCache.Load()
 				if entry, found := cache.Mappings[port]; found {
-					ttl := 5 * time.Second
+					ttl := 1500 * time.Millisecond
 					if entry.err != nil {
-						ttl = 2 * time.Second
+						ttl = 500 * time.Millisecond
 					}
 					if time.Since(entry.createdAt) < ttl {
 						processScanMu.Unlock()
@@ -414,7 +414,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 	var meta ProcessMetadata
 	var err error
 
-	if found && time.Since(entry.createdAt) < 1*time.Minute {
+	if found && time.Since(entry.createdAt) < 2*time.Second {
 		if entry.err != nil {
 			return "Unknown", "", entry.err
 		}
@@ -426,7 +426,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 		entry, found = pidMetadataCache[pid]
 		pidMetadataCacheMu.RUnlock()
 
-		if found && time.Since(entry.createdAt) < 1*time.Minute {
+		if found && time.Since(entry.createdAt) < 2*time.Second {
 			metadataResolveMu.Unlock()
 			if entry.err != nil {
 				return "Unknown", "", entry.err
@@ -466,7 +466,7 @@ func GetProcessInfoForPort(port uint16, patterns []string) (string, string, erro
 	cache := portToPIDCache.Load()
 	if cache != nil {
 		if entry, found := cache.Mappings[port]; found {
-			ttl := 1 * time.Second
+			ttl := 1500 * time.Millisecond
 			if entry.err != nil {
 				ttl = 500 * time.Millisecond
 			}

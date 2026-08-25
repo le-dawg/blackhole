@@ -67,8 +67,8 @@ Domain filtering in the hot path is executed against an in-memory reversed-label
 ### 2.2 Bounded Worker Pool & Graceful Drain
 - Incoming UDP packets are received by `runMessageLoop` and dispatched to a buffered `queryQueue` (capacity 2048).
 - A fixed pool of 64 worker goroutines processes DNS lookups concurrently.
-- If the queue is saturated, the server emits a lightweight, fast SERVFAIL response rather than allocating unbound goroutines.
-- During daemon termination, `ctx.Done()` signals workers, stops ingestion, drains all pending jobs via `sync.WaitGroup`, and flushes active listeners cleanly.
+- If the queue is saturated, the server emits a lightweight, fast SERVFAIL response and records the query in telemetry rather than allocating unbound goroutines.
+- During daemon termination, `ctx.Done()` signals workers, stops ingestion by setting a read deadline, closes `queryQueue`, waits for workers to drain with a 3-second timeout, and closes the UDP listener cleanly.
 
 ---
 
@@ -83,8 +83,8 @@ The REST IPC API operates exclusively over a Unix domain socket (`/var/run/black
 To prevent cache poisoning and spoofing attacks:
 - **Header Verification:** Responses must have `Header.Response == true`, matching OpCode, matching Query ID, and matching Question tuple (`QName`, `QType`, `QClass`).
 - **Cardinality Limits:** Requests and responses must contain exactly 1 question, and the total resource record count across Answer, Authority, and Additional sections must not exceed 100.
-- **CNAME Graph Traversal:** Answers are verified along an exact CNAME graph traversal starting from the queried domain (maximum 8 hops). Loop detection immediately aborts poisoned responses.
-- **Auxiliary Section Sanitization:** Authority records must reside strictly within the queried zone's bailiwick. Additional records must match either the CNAME traversal path or validated authoritative NS glue records. OPT records (RFC 6891) are preserved without corrupting Extended RCODE/flags in TTL fields.
+- **CNAME Graph Traversal:** Answers are verified along an exact CNAME graph traversal starting from the queried domain (maximum 8 hops). Loop detection and conflicting CNAME owner checks immediately abort poisoned responses.
+- **Auxiliary Section Sanitization:** Authority records must reside strictly within the queried zone's non-empty bailiwick. Additional records must match either the CNAME traversal path, validated authoritative NS glue records, or Answer MX/SRV targets. OPT records (RFC 6891) are preserved without corrupting Extended RCODE/flags in TTL fields.
 
 ---
 
@@ -94,8 +94,8 @@ To prevent cache poisoning and spoofing attacks:
 Gravity synchronization updates blocklists atomically without compromising live DNS resolution:
 1. **Fetch & Pre-validation:** Feeds are fetched with conditional HTTP headers (`If-None-Match`, `If-Modified-Since`) and streamed through bounded readers (`maxBlocklistResponseBytes = 64 MiB`).
 2. **Cryptographic Digesting:** Staged caches are hashed using SHA-256 (`GravityState.SHA256`).
-3. **Drop Protection & Rule Floors:** Feeds must satisfy minimum rule floors and cannot collapse below 50% of the previous known-good rule count without deliberate administrative override.
-4. **Crash Recovery Journal:** A transactional journal (`gravity.publish.json`) records state transitions before atomic renaming. If interrupted by power loss or crashes, the daemon reconciles the journal on startup, restoring either the old or new generation cleanly.
+3. **Drop Protection & Rule Floors:** Feeds must satisfy minimum rule floors and cannot collapse below 50% of the previous known-good rule count (calculated using ceiling division `(RuleCount + 1) / 2`).
+4. **Crash Recovery Journal:** A transactional journal (`gravity.publish.json`) records state transitions before atomic renaming. If interrupted by power loss or crashes, the daemon reconciles the journal on startup, verifying cache SHA-256 digests before adopting new states or rolling back cleanly to the previous generation.
 5. **Stale Source Eviction:** Removed list sources have their caches and state map entries safely purged.
 
 ### 4.2 Two-Pass AdGuard & Hosts Parsing
@@ -115,7 +115,7 @@ type Filter interface {
     Process(req []byte) (resp []byte, block bool, err error)
 }
 ```
-Global registration: `dnsd.RegisterFilter(f Filter)`
+Global registration: `dnsd.RegisterFilter(f Filter)`. Custom filters are invoked concurrently across worker goroutines and must be re-entrant and thread-safe. If a filter returns an error, the daemon immediately emits SERVFAIL to the client and records the event in telemetry.
 
 ### `ListParser` & `RuleAwareListParser`
 ```go
@@ -127,7 +127,7 @@ type RuleAwareListParser interface {
     ParseRules(r io.Reader, onBlock func(string), onException func(string)) error
 }
 ```
-Registration: `dnsd.RegisterParserForURL(urlPrefix string, p any)`
+Registration: `dnsd.RegisterParserForURL(urlPrefix string, p any)`. Validates non-nil interface implementation before registration.
 
 ---
 
