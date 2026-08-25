@@ -2,8 +2,10 @@
 package dnsd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -24,7 +26,33 @@ var (
 
 type AuthenticatedUnixListener struct {
 	*net.UnixListener
-	AllowedUIDs []uint32
+	allowedUIDsMu sync.RWMutex
+	allowedUIDs   []uint32
+}
+
+func NewAuthenticatedUnixListener(unixListener *net.UnixListener, allowedUIDs []uint32) *AuthenticatedUnixListener {
+	listener := &AuthenticatedUnixListener{UnixListener: unixListener}
+	listener.SetAllowedUIDs(allowedUIDs)
+	return listener
+}
+
+func (l *AuthenticatedUnixListener) SetAllowedUIDs(allowedUIDs []uint32) {
+	l.allowedUIDsMu.Lock()
+	defer l.allowedUIDsMu.Unlock()
+	l.allowedUIDs = append([]uint32(nil), allowedUIDs...)
+}
+
+func (l *AuthenticatedUnixListener) isAllowedUID(uid uint32) bool {
+	l.allowedUIDsMu.RLock()
+	defer l.allowedUIDsMu.RUnlock()
+
+	for _, allowedUID := range l.allowedUIDs {
+		if uid == allowedUID {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getConsoleUID() uint32 {
@@ -64,18 +92,10 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 				return
 			}
 
-			allowed := false
-			for _, uid := range l.AllowedUIDs {
-				if cred.Uid == uid {
-					allowed = true
-					break
+				if !l.isAllowedUID(cred.Uid) {
+					authErr = ErrUnauthorizedUID
 				}
-			}
-
-			if !allowed {
-				authErr = ErrUnauthorizedUID
-			}
-		})
+			})
 
 		if err != nil || authErr != nil {
 			conn.Close()
@@ -93,12 +113,20 @@ var (
 	pauseGeneration uint64
 )
 
+type IPCServer struct {
+	*http.Server
+	serveErrors <-chan error
+}
+
+func (s *IPCServer) Errors() <-chan error {
+	return s.serveErrors
+}
+
 func IsPaused() bool {
 	return atomic.LoadInt32(&pauseFlag) == 1
 }
 
-func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (*http.Server, error) {
-
+func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (*IPCServer, error) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
@@ -178,18 +206,99 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 		ReadTimeout:  2 * time.Second,
 		WriteTimeout: 2 * time.Second,
 	}
-	go func() {
-		if unixListener, ok := listener.(*net.UnixListener); ok {
-			allowed := []uint32{0}
-			if consoleUID := getConsoleUID(); consoleUID != 0 {
-				allowed = append(allowed, consoleUID)
-			}
-			listener = &AuthenticatedUnixListener{UnixListener: unixListener, AllowedUIDs: allowed}
+	serveErrCh := make(chan error, 1)
+	ipcServer := &IPCServer{
+		Server:      srv,
+		serveErrors: serveErrCh,
+	}
+
+	serveListener := listener
+	readySocketPath := ""
+	if unixListener, ok := listener.(*net.UnixListener); ok {
+		allowed := []uint32{0}
+		if consoleUID := getConsoleUID(); consoleUID != 0 {
+			allowed = append(allowed, consoleUID)
 		}
-		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+		serveListener = NewAuthenticatedUnixListener(unixListener, allowed)
+		if addr, ok := unixListener.Addr().(*net.UnixAddr); ok {
+			readySocketPath = addr.Name
+		}
+	}
+
+	go func() {
+		if err := srv.Serve(serveListener); err != nil && err != http.ErrServerClosed {
+			select {
+			case serveErrCh <- err:
+			default:
+			}
 			log.Printf("IPC Server err: %v", err)
 		}
+		close(serveErrCh)
 	}()
 
-	return srv, nil
+	if readySocketPath != "" {
+		if err := waitForIPCServerReady(readySocketPath, serveErrCh, 500*time.Millisecond); err != nil {
+			_ = srv.Close()
+			return nil, err
+		}
+	}
+
+	return ipcServer, nil
+}
+
+func waitForIPCServerReady(socketPath string, serveErrCh <-chan error, timeout time.Duration) error {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	defer transport.CloseIdleConnections()
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   100 * time.Millisecond,
+	}
+
+	deadline := time.Now().Add(timeout)
+	errCh := serveErrCh
+	for time.Now().Before(deadline) {
+		select {
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("failed to start IPC server: %w", err)
+			}
+		default:
+		}
+
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://unix/stats", nil)
+		if err != nil {
+			return fmt.Errorf("build IPC readiness probe request: %w", err)
+		}
+
+		resp, err := client.Do(req)
+		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	select {
+	case err, ok := <-errCh:
+		if ok && err != nil {
+			return fmt.Errorf("failed to start IPC server: %w", err)
+		}
+	default:
+	}
+
+	return fmt.Errorf("timed out waiting for IPC server readiness on %s", socketPath)
 }

@@ -25,3 +25,10 @@ func DefaultConfig() Config {
 		SocketPath:     "/var/run/blackhole.sock",
 	}
 }
+
+func (c *Config) SetExclusionsPath(path string) {
+	c.ExclusionsPath = path
+	if path != "" {
+		c.DataDir = filepath.Dir(path)
+	}
+}

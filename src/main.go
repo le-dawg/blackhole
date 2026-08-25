@@ -18,7 +18,7 @@ func main() {
 		cfg.Port = *port
 	}
 	if *exclusionsPathFlag != "" {
-		cfg.ExclusionsPath = *exclusionsPathFlag
+		cfg.SetExclusionsPath(*exclusionsPathFlag)
 	}
 
 	daemon := dnsd.NewDaemon(cfg)

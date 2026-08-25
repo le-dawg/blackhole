@@ -2,10 +2,12 @@ package dnsd
 
 import (
 	"bufio"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -13,6 +15,24 @@ import (
 
 type UserLists struct {
 	watcher *fsnotify.Watcher
+}
+
+var (
+	loadListFuncMu sync.RWMutex
+	loadListFunc   = loadList
+)
+
+func callLoadList(path string) (map[string]bool, error) {
+	loadListFuncMu.RLock()
+	f := loadListFunc
+	loadListFuncMu.RUnlock()
+	return f(path)
+}
+
+func setLoadListFuncForTest(f func(string) (map[string]bool, error)) {
+	loadListFuncMu.Lock()
+	loadListFunc = f
+	loadListFuncMu.Unlock()
 }
 
 func StartUserListWatcher(dir string, r *FilterEngine) (*UserLists, error) {
@@ -24,10 +44,29 @@ func StartUserListWatcher(dir string, r *FilterEngine) (*UserLists, error) {
 	wlPath := filepath.Join(dir, "whitelist.txt")
 	blPath := filepath.Join(dir, "blacklist.txt")
 
+	lastWhitelist := map[string]bool{}
+	lastBlacklist := map[string]bool{}
+	var reloadMu sync.Mutex
+
 	reload := func() {
-		wl := loadList(wlPath)
-		bl := loadList(blPath)
-		r.SetLists(wl, bl)
+		reloadMu.Lock()
+		defer reloadMu.Unlock()
+
+		wl, err := callLoadList(wlPath)
+		if err != nil {
+			log.Printf("userlist whitelist reload error: %v", err)
+		} else {
+			lastWhitelist = wl
+		}
+
+		bl, err := callLoadList(blPath)
+		if err != nil {
+			log.Printf("userlist blacklist reload error: %v", err)
+		} else {
+			lastBlacklist = bl
+		}
+
+		r.SetLists(lastWhitelist, lastBlacklist)
 	}
 
 	reload()
@@ -55,7 +94,10 @@ func StartUserListWatcher(dir string, r *FilterEngine) (*UserLists, error) {
 		}
 	}()
 
-	watcher.Add(dir)
+	if err := watcher.Add(dir); err != nil {
+		watcher.Close()
+		return nil, err
+	}
 	return &UserLists{watcher: watcher}, nil
 }
 
@@ -63,11 +105,14 @@ func (ul *UserLists) Close() error {
 	return ul.watcher.Close()
 }
 
-func loadList(path string) map[string]bool {
+func loadList(path string) (map[string]bool, error) {
 	m := make(map[string]bool)
 	f, err := os.Open(path)
 	if err != nil {
-		return m
+		if os.IsNotExist(err) {
+			return m, nil
+		}
+		return nil, err
 	}
 	defer f.Close()
 
@@ -79,5 +124,8 @@ func loadList(path string) map[string]bool {
 			m[line] = true
 		}
 	}
-	return m
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan %s: %w", path, err)
+	}
+	return m, nil
 }

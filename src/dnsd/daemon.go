@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -23,6 +22,8 @@ type Daemon struct {
 	upstreamMu sync.RWMutex
 }
 
+var ErrUnexpectedIPCServerTermination = errors.New("unexpected ipc server termination")
+
 func NewDaemon(cfg Config) *Daemon {
 	return &Daemon{
 		config:    cfg,
@@ -32,7 +33,7 @@ func NewDaemon(cfg Config) *Daemon {
 }
 
 func (d *Daemon) Start(ctx context.Context) error {
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
 	exclusionManager, err := StartExclusionWatcher(d.config.ExclusionsPath)
 	if err != nil {
 		return err
@@ -80,7 +81,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 
 	rb := NewRingBuffer(1000)
-	var ipcServer *http.Server
+	var ipcServer *IPCServer
 	stats := NewGlobalStats()
 
 	if d.config.SocketPath != "" {
@@ -107,12 +108,35 @@ func (d *Daemon) Start(ctx context.Context) error {
 		}
 	}
 
+	if ipcServer != nil {
+		go d.watchIPCServerErrors(ipcServer, cancel)
+	}
+
 	go d.handleSignals(ctx, cancel, conn, ipcServer)
 	d.runMessageLoop(conn, exclusionManager, r, rb, stats)
-	return nil
+	return daemonRunResult(ctx)
 }
 
-func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelFunc, conn *net.UDPConn, ipcServer *http.Server) {
+func (d *Daemon) watchIPCServerErrors(ipcServer *IPCServer, cancel context.CancelCauseFunc) {
+	err, ok := <-ipcServer.Errors()
+	if !ok || err == nil {
+		return
+	}
+
+	wrappedErr := fmt.Errorf("%w: %v", ErrUnexpectedIPCServerTermination, err)
+	log.Printf("IPC server terminated unexpectedly: %v", err)
+	cancel(wrappedErr)
+}
+
+func daemonRunResult(ctx context.Context) error {
+	cause := context.Cause(ctx)
+	if cause == nil || errors.Is(cause, context.Canceled) {
+		return nil
+	}
+	return cause
+}
+
+func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFunc, conn *net.UDPConn, ipcServer *IPCServer) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	
@@ -136,7 +160,7 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelFunc, c
 	conn.Close()
 	
 	// Ensure the parent context cancels down the tree
-	cancel()
+	cancel(nil)
 }
 
 func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {

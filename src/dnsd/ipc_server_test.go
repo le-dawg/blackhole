@@ -3,6 +3,8 @@ package dnsd
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -42,6 +44,59 @@ func TestIPCServer(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestStartIPCServer_FailsClosedUnixListener(t *testing.T) {
+	socketPath := fmt.Sprintf("/tmp/blackhole-ipc-%d.sock", time.Now().UnixNano())
+	_ = os.Remove(socketPath)
+	defer os.Remove(socketPath)
+
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	unixListener := listener.(*net.UnixListener)
+	if err := unixListener.Close(); err != nil {
+		t.Fatalf("failed to close listener: %v", err)
+	}
+
+	rb := NewRingBuffer(10)
+	st := NewGlobalStats()
+
+	srv, err := StartIPCServer(unixListener, rb, st)
+	if err == nil {
+		if srv != nil {
+			_ = srv.Shutdown(context.Background())
+		}
+		t.Fatal("expected closed unix listener startup to fail")
+	}
+}
+
+func TestIPCServer_ReportsUnexpectedServeErrors(t *testing.T) {
+	listener := &MockIPCListener{
+		connCh: make(chan net.Conn),
+	}
+
+	rb := NewRingBuffer(10)
+	st := NewGlobalStats()
+	srv, err := StartIPCServer(listener, rb, st)
+	if err != nil {
+		t.Fatalf("failed to start: %v", err)
+	}
+
+	if err := listener.Close(); err != nil {
+		t.Fatalf("failed to close listener: %v", err)
+	}
+
+	select {
+	case serveErr := <-srv.Errors():
+		if !errors.Is(serveErr, net.ErrClosed) {
+			t.Fatalf("expected net.ErrClosed, got %v", serveErr)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected unexpected serve error to be reported")
 	}
 }
 
@@ -134,10 +189,7 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 
 	unixListener := l.(*net.UnixListener)
 	// Start with an unauthorized UID
-	authListener := &AuthenticatedUnixListener{
-		UnixListener: unixListener,
-		AllowedUIDs:  []uint32{999999999},
-	}
+	authListener := NewAuthenticatedUnixListener(unixListener, []uint32{999999999})
 
 	rb := NewRingBuffer(10)
 	st := NewGlobalStats()
@@ -164,7 +216,7 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 	}
 
 	// 2. Authorize test runner UID on the SAME live server instance
-	authListener.AllowedUIDs = []uint32{uint32(os.Getuid())}
+	authListener.SetAllowedUIDs([]uint32{uint32(os.Getuid())})
 
 	// 3. Second request to the same server succeeds with 200 OK, proving the server survived
 	resp2, err := client.Get("http://dummy/stats")

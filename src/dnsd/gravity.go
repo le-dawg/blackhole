@@ -3,13 +3,18 @@ package dnsd
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -22,10 +27,48 @@ var DefaultLists = []string{
 	"https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
 }
 
-type GravityState struct {
-	ETag         string `json:"etag"`
-	LastModified string `json:"last_modified"`
+var legacyDefaultLists = []string{
+	"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+	"https://small.oisd.nl/domainswild",
+	"https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
 }
+
+const (
+	gravityStateMetaKey = "__blackhole_meta__"
+	maxBlocklistResponseBytes = 64 * 1024 * 1024
+)
+
+type GravityState struct {
+	ETag         string   `json:"etag"`
+	LastModified string   `json:"last_modified"`
+	Exceptions   []string `json:"exceptions,omitempty"`
+}
+
+type gravityPublishJournal struct {
+	PreviousState map[string]GravityState `json:"previous_state"`
+	NextState     map[string]GravityState `json:"next_state"`
+	Caches        []gravityJournalCache   `json:"caches"`
+}
+
+type gravityJournalCache struct {
+	CachePath        string `json:"cache_path"`
+	HadPreviousCache bool   `json:"had_previous_cache"`
+}
+
+var createSiblingTempFileFunc = createSiblingTempFile
+var saveStateMapFunc = saveStateMap
+var renameFileFunc = os.Rename
+var removeFileFunc = os.Remove
+var syncFileFunc = func(f *os.File) error { return f.Sync() }
+var syncDirFunc = func(dir string) error {
+	df, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer df.Close()
+	return df.Sync()
+}
+var statFileFunc = os.Stat
 
 var (
 	parserMu   sync.RWMutex
@@ -56,37 +99,298 @@ func loadStateMap(path string) map[string]GravityState {
 	}
 	defer f.Close()
 
-	if err := json.NewDecoder(f).Decode(&m); err != nil && err != io.EOF {
+	dec := json.NewDecoder(f)
+	if err := dec.Decode(&m); err != nil && err != io.EOF {
 		log.Printf("Failed to decode state map: %v", err)
+		return make(map[string]GravityState)
+	}
+	var trailing json.RawMessage
+	if err := dec.Decode(&trailing); err != io.EOF {
+		log.Printf("Failed to decode state map: trailing data")
+		return make(map[string]GravityState)
+	}
+	if m == nil {
+		return make(map[string]GravityState)
 	}
 	return m
 }
 
-func saveStateMap(path string, m map[string]GravityState) {
-	tempPath := path + ".tmp"
-	f, err := os.Create(tempPath)
+func saveStateMap(path string, m map[string]GravityState) error {
+	return writeJSONFile(path, m)
+}
+
+func writeJSONFile(path string, value any) error {
+	f, tempPath, err := createSiblingTempFile(path)
 	if err != nil {
 		log.Printf("Failed to create temp state map file: %v", err)
-		return
+		return err
 	}
 
-	if err := json.NewEncoder(f).Encode(m); err != nil {
+	if err := json.NewEncoder(f).Encode(value); err != nil {
 		log.Printf("Failed to encode state map: %v", err)
 		f.Close()
-		os.Remove(tempPath)
-		return
+		removeFileFunc(tempPath)
+		return err
+	}
+	if err := syncFileFunc(f); err != nil {
+		f.Close()
+		removeFileFunc(tempPath)
+		return err
 	}
 
 	if err := f.Close(); err != nil {
 		log.Printf("Failed to close temp state map file: %v", err)
-		os.Remove(tempPath)
-		return
+		removeFileFunc(tempPath)
+		return err
 	}
 
-	if err := os.Rename(tempPath, path); err != nil {
+	if err := renameFileFunc(tempPath, path); err != nil {
 		log.Printf("Failed to rename temp state map to final path: %v", err)
-		os.Remove(tempPath)
+		removeFileFunc(tempPath)
+		return err
 	}
+	if err := syncDirFunc(filepath.Dir(path)); err != nil {
+		return err
+	}
+	return nil
+}
+
+func createSiblingTempFile(path string) (*os.File, string, error) {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	f, err := os.CreateTemp(dir, base+".tmp-*")
+	if err != nil {
+		return nil, "", err
+	}
+	return f, f.Name(), nil
+}
+
+func cachePathForURL(dir, url string) string {
+	sum := sha256.Sum256([]byte(url))
+	return filepath.Join(dir, "gravity-"+hex.EncodeToString(sum[:8])+".cache")
+}
+
+func legacyCachePathForURL(dir, url string) (string, bool) {
+	for index, legacyURL := range legacyDefaultLists {
+		if legacyURL == url {
+			return filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", index)), true
+		}
+	}
+	return "", false
+}
+
+func openCacheForSource(dir, url string, index int) (*os.File, error) {
+	cachePath := cachePathForURL(dir, url)
+	backupPath := cachePath + ".bak"
+	if f, err := os.Open(cachePath); err == nil {
+		return f, nil
+	}
+	if _, err := statFileFunc(backupPath); err == nil {
+		if err := renameFileFunc(backupPath, cachePath); err != nil {
+			return nil, err
+		}
+		return os.Open(cachePath)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	legacyCachePath, ok := legacyCachePathForURL(dir, url)
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	if _, err := statFileFunc(legacyCachePath); err != nil {
+		return nil, err
+	}
+
+	if err := renameFileFunc(legacyCachePath, cachePath); err == nil {
+		return os.Open(cachePath)
+	}
+
+	return os.Open(legacyCachePath)
+}
+
+func loadCachedSource(dir, url string, index int, stateMap map[string]GravityState, readers *[]io.Reader, filesToClose *[]*os.File, gravityAllowlist map[string]bool) bool {
+	f, err := openCacheForSource(dir, url, index)
+	if err != nil {
+		return false
+	}
+	exceptions := sanitizedExceptions(stateMap[url].Exceptions)
+	valid, err := cacheHasEffectiveRules(f)
+	if err != nil || !valid {
+		_ = f.Close()
+		return false
+	}
+	*readers = append(*readers, f)
+	*filesToClose = append(*filesToClose, f)
+	for _, domain := range exceptions {
+		gravityAllowlist[domain] = true
+	}
+	return true
+}
+
+func cacheHasEffectiveRules(f *os.File) (bool, error) {
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if isEffectiveDomain(normalizeDomain(scanner.Text())) {
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return false, err
+	}
+	_, err := f.Seek(0, io.SeekStart)
+	return false, err
+}
+
+func gravityPublishJournalPath(dir string) string {
+	return filepath.Join(dir, "gravity.publish.json")
+}
+
+func piHoleSourceRequiresMultipleRules(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return true
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host != "127.0.0.1" && host != "localhost"
+}
+
+func sourceRequiresMultipleRules(rawURL string, parser ListParser) bool {
+	switch parser.(type) {
+	case *PiHoleParser, *BlocklistParser:
+		return piHoleSourceRequiresMultipleRules(rawURL)
+	default:
+		return false
+	}
+}
+
+func validateJournalCaches(dir string, caches []gravityJournalCache) error {
+	if len(caches) == 0 {
+		return fmt.Errorf("invalid gravity publish journal")
+	}
+	seen := make(map[string]struct{}, len(caches))
+	cleanDir := filepath.Clean(dir)
+	cachePattern := regexp.MustCompile(`^gravity-[0-9a-f]{16}\.cache$`)
+	for _, entry := range caches {
+		if entry.CachePath == "" {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		cleanPath := filepath.Clean(entry.CachePath)
+		if filepath.Dir(cleanPath) != cleanDir {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		if !cachePattern.MatchString(filepath.Base(cleanPath)) {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		if _, exists := seen[cleanPath]; exists {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		seen[cleanPath] = struct{}{}
+	}
+	return nil
+}
+
+func newGravityCommitMarker() string {
+	return fmt.Sprintf("commit-%d", time.Now().UnixNano())
+}
+
+func saveGravityPublishJournal(dir string, previousState map[string]GravityState, nextState map[string]GravityState, caches []gravityJournalCache) error {
+	journal := gravityPublishJournal{
+		PreviousState: previousState,
+		NextState:     nextState,
+		Caches:        caches,
+	}
+	return writeJSONFile(gravityPublishJournalPath(dir), journal)
+}
+
+func recoverGravityArtifacts(dir string, statePath string) error {
+	journalPath := gravityPublishJournalPath(dir)
+	if _, err := statFileFunc(journalPath); err == nil {
+		f, err := os.Open(journalPath)
+		if err != nil {
+			return err
+		}
+		var journal gravityPublishJournal
+		dec := json.NewDecoder(f)
+		decodeErr := dec.Decode(&journal)
+		if decodeErr != nil {
+			_ = f.Close()
+			return decodeErr
+		}
+		var trailing json.RawMessage
+		if err := dec.Decode(&trailing); err != io.EOF {
+			_ = f.Close()
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		_ = f.Close()
+		if journal.PreviousState == nil || journal.NextState == nil || len(journal.Caches) == 0 {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		if _, ok := journal.NextState[gravityStateMetaKey]; !ok {
+			return fmt.Errorf("invalid gravity publish journal")
+		}
+		if err := validateJournalCaches(dir, journal.Caches); err != nil {
+			return err
+		}
+		currentState := loadStateMap(statePath)
+		if reflect.DeepEqual(currentState, journal.NextState) {
+			for _, entry := range journal.Caches {
+				if err := removeFileFunc(entry.CachePath + ".bak"); err != nil && !os.IsNotExist(err) {
+					return err
+				}
+			}
+		} else {
+			for _, entry := range journal.Caches {
+				backupPath := entry.CachePath + ".bak"
+				if _, err := statFileFunc(backupPath); err == nil {
+					if err := removeFileFunc(entry.CachePath); err != nil && !os.IsNotExist(err) {
+						return err
+					}
+					if err := renameFileFunc(backupPath, entry.CachePath); err != nil {
+						return err
+					}
+					continue
+				} else if !os.IsNotExist(err) {
+					return err
+				}
+				if !entry.HadPreviousCache {
+					if err := removeFileFunc(entry.CachePath); err != nil && !os.IsNotExist(err) {
+						return err
+					}
+				}
+			}
+			if journal.PreviousState == nil {
+				journal.PreviousState = make(map[string]GravityState)
+			}
+			if err := saveStateMap(statePath, journal.PreviousState); err != nil {
+				return err
+			}
+		}
+		if err := removeFileFunc(journalPath); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	tempPatterns := []string{
+		filepath.Join(dir, "gravity-*.cache.tmp-*"),
+		filepath.Join(dir, "gravity.state.json.tmp-*"),
+		filepath.Join(dir, "gravity.publish.json.tmp-*"),
+	}
+	for _, pattern := range tempPatterns {
+		tempPaths, _ := filepath.Glob(pattern)
+		for _, tempPath := range tempPaths {
+				_ = removeFileFunc(tempPath)
+		}
+	}
+	return nil
 }
 
 func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) error {
@@ -112,30 +416,51 @@ func StartGravitySync(ctx context.Context, dir string, r *FilterEngine) error {
 }
 
 func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create gravity data dir: %w", err)
+	}
+	if len(DefaultLists) == 0 {
+		return fmt.Errorf("no gravity sources configured")
+	}
+
 	statePath := filepath.Join(dir, "gravity.state.json")
+	if err := recoverGravityArtifacts(dir, statePath); err != nil {
+		return fmt.Errorf("recover gravity artifacts: %w", err)
+	}
 	stateMap := loadStateMap(statePath)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	var readers []io.Reader
 	var filesToClose []*os.File
+	gravityAllowlist := make(map[string]bool)
+	type stagedSource struct {
+		url       string
+		cachePath string
+		tempPath  string
+		state     GravityState
+	}
+	var stagedSources []stagedSource
 
 	defer func() {
 		for _, f := range filesToClose {
 			f.Close()
 		}
+		for _, staged := range stagedSources {
+			if staged.tempPath != "" {
+			_ = removeFileFunc(staged.tempPath)
+			}
+		}
 	}()
 
 	for i, url := range DefaultLists {
-		cachePath := filepath.Join(dir, fmt.Sprintf("gravity-%d.cache", i))
+		cachePath := cachePathForURL(dir, url)
+		sourceExceptions := make(map[string]bool)
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			log.Printf("Failed to create request for %s: %v", url, err)
-			if f, err := os.Open(cachePath); err == nil {
-				readers = append(readers, f)
-				filesToClose = append(filesToClose, f)
-			}
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 		if state, ok := stateMap[url]; ok {
@@ -150,41 +475,28 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		resp, err := client.Do(req)
 		if err != nil {
 			log.Printf("Failed to fetch %s: %v", url, err)
-			if f, err := os.Open(cachePath); err == nil {
-				readers = append(readers, f)
-				filesToClose = append(filesToClose, f)
-			}
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 
 		if resp.StatusCode == http.StatusNotModified {
 			resp.Body.Close()
-			if f, err := os.Open(cachePath); err == nil {
-				readers = append(readers, f)
-				filesToClose = append(filesToClose, f)
-			}
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
 			log.Printf("Failed to fetch %s, status code: %d", url, resp.StatusCode)
-			if f, err := os.Open(cachePath); err == nil {
-				readers = append(readers, f)
-				filesToClose = append(filesToClose, f)
-			}
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 
-		tempCache := cachePath + ".tmp"
-		f, err := os.Create(tempCache)
+		f, tempCache, err := createSiblingTempFileFunc(cachePath)
 		if err != nil {
 			log.Printf("Failed to create temp cache %s: %v", tempCache, err)
 			resp.Body.Close()
-			if fRead, err := os.Open(cachePath); err == nil {
-				readers = append(readers, fRead)
-				filesToClose = append(filesToClose, fRead)
-			}
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 
@@ -211,20 +523,69 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		parserMu.RUnlock()
 
 		var writeErr error
-		parseErr := parser.Parse(resp.Body, func(domain string) {
-			if writeErr == nil {
-				if _, err := writer.WriteString(domain + "\n"); err != nil {
-					writeErr = err
+		var parseErr error
+		blockCount := 0
+		uniqueBlockDomains := make(map[string]struct{})
+		exceptionCount := 0
+		limitedBody := io.LimitReader(resp.Body, maxBlocklistResponseBytes)
+		if ruleAwareParser, ok := parser.(RuleAwareListParser); ok {
+			parseErr = ruleAwareParser.ParseRules(
+				limitedBody,
+				func(domain string) {
+					domain = normalizeDomain(domain)
+					if !isEffectiveDomain(domain) {
+						return
+					}
+					blockCount++
+					uniqueBlockDomains[domain] = struct{}{}
+					if writeErr == nil {
+						if _, err := writer.WriteString(domain + "\n"); err != nil {
+							writeErr = err
+						}
+					}
+				},
+				func(domain string) {
+					domain = normalizeDomain(domain)
+					if !isEffectiveDomain(domain) {
+						return
+					}
+					exceptionCount++
+					sourceExceptions[domain] = true
+				},
+			)
+		} else {
+			parseErr = parser.Parse(limitedBody, func(domain string) {
+				domain = normalizeDomain(domain)
+				if !isEffectiveDomain(domain) {
+					return
 				}
-			}
-		})
+				blockCount++
+				uniqueBlockDomains[domain] = struct{}{}
+				if writeErr == nil {
+					if _, err := writer.WriteString(domain + "\n"); err != nil {
+						writeErr = err
+					}
+				}
+			})
+		}
 
 		if writeErr == nil && parseErr != nil {
 			writeErr = parseErr
 		}
+		if writeErr == nil && blockCount == 0 {
+			writeErr = fmt.Errorf("source produced no effective block rules")
+		}
+		if writeErr == nil && sourceRequiresMultipleRules(url, parser) && len(uniqueBlockDomains) < 2 {
+			writeErr = fmt.Errorf("source produced insufficient effective block rules")
+		}
 
 		if writeErr == nil {
 			if err := writer.Flush(); err != nil {
+				writeErr = err
+			}
+		}
+		if writeErr == nil {
+			if err := syncFileFunc(f); err != nil {
 				writeErr = err
 			}
 		}
@@ -237,36 +598,34 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 
 		if writeErr != nil {
 			log.Printf("Error processing blocklist %s: %v", url, writeErr)
-			os.Remove(tempCache)
-			if fRead, err := os.Open(cachePath); err == nil {
-				readers = append(readers, fRead)
-				filesToClose = append(filesToClose, fRead)
-			}
+			_ = removeFileFunc(tempCache)
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
 
-		if err := os.Rename(tempCache, cachePath); err != nil {
-			log.Printf("Failed to rename temp cache for %s: %v", url, err)
-			os.Remove(tempCache)
-			if fRead, err := os.Open(cachePath); err == nil {
-				readers = append(readers, fRead)
-				filesToClose = append(filesToClose, fRead)
-			}
+		fRead, err := os.Open(tempCache)
+		if err != nil {
+			log.Printf("Failed to open staged cache for %s: %v", url, err)
+			_ = removeFileFunc(tempCache)
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
 			continue
 		}
-
-		stateMap[url] = GravityState{
-			ETag:         resp.Header.Get("ETag"),
-			LastModified: resp.Header.Get("Last-Modified"),
-		}
-
-		if fRead, err := os.Open(cachePath); err == nil {
-			readers = append(readers, fRead)
-			filesToClose = append(filesToClose, fRead)
+		readers = append(readers, fRead)
+		filesToClose = append(filesToClose, fRead)
+		stagedSources = append(stagedSources, stagedSource{
+			url:       url,
+			cachePath: cachePath,
+			tempPath:  tempCache,
+			state: GravityState{
+				ETag:         resp.Header.Get("ETag"),
+				LastModified: resp.Header.Get("Last-Modified"),
+				Exceptions:   sortedKeys(sourceExceptions),
+			},
+		})
+		for domain := range sourceExceptions {
+			gravityAllowlist[domain] = true
 		}
 	}
-
-	saveStateMap(statePath, stateMap)
 
 	if len(readers) < len(DefaultLists) {
 		return fmt.Errorf("incomplete gravity sources: %d of %d available", len(readers), len(DefaultLists))
@@ -278,6 +637,161 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("failed scanning gravity lists: %w", err)
 	}
-	r.UpdateRoot(newRoot)
+
+	newStateMap := make(map[string]GravityState, len(stateMap)+len(stagedSources))
+	for url, state := range stateMap {
+		if url == gravityStateMetaKey {
+			continue
+		}
+		newStateMap[url] = state
+	}
+	for _, staged := range stagedSources {
+		newStateMap[staged.url] = staged.state
+	}
+	newStateMap[gravityStateMetaKey] = GravityState{ETag: newGravityCommitMarker()}
+	type publishedCache struct {
+		cachePath  string
+		backupPath string
+	}
+	var published []publishedCache
+	journalCaches := make([]gravityJournalCache, 0, len(stagedSources))
+	rollbackPublishedCaches := func() {
+		for i := len(published) - 1; i >= 0; i-- {
+			entry := published[i]
+				_ = removeFileFunc(entry.cachePath)
+					if _, statErr := statFileFunc(entry.backupPath); statErr == nil {
+						_ = renameFileFunc(entry.backupPath, entry.cachePath)
+					}
+		}
+	}
+	for _, staged := range stagedSources {
+		_, statErr := statFileFunc(staged.cachePath)
+		if statErr != nil && !os.IsNotExist(statErr) {
+			return fmt.Errorf("stat cache for %s: %w", staged.url, statErr)
+		}
+		journalCaches = append(journalCaches, gravityJournalCache{
+			CachePath:        staged.cachePath,
+			HadPreviousCache: statErr == nil,
+		})
+	}
+	if len(stagedSources) > 0 {
+		if err := saveGravityPublishJournal(dir, stateMap, newStateMap, journalCaches); err != nil {
+			return fmt.Errorf("save gravity publish journal: %w", err)
+		}
+	}
+	for idx := range stagedSources {
+		staged := &stagedSources[idx]
+		backupPath := staged.cachePath + ".bak"
+		if err := removeFileFunc(backupPath); err != nil && !os.IsNotExist(err) {
+			rollbackPublishedCaches()
+			return fmt.Errorf("prepare backup for %s: %w", staged.url, err)
+		}
+		if err := renameFileFunc(staged.cachePath, backupPath); err != nil && !os.IsNotExist(err) {
+			rollbackPublishedCaches()
+			return fmt.Errorf("backup existing cache for %s: %w", staged.url, err)
+		}
+		if err := renameFileFunc(staged.tempPath, staged.cachePath); err != nil {
+			if _, statErr := statFileFunc(backupPath); statErr == nil {
+				_ = renameFileFunc(backupPath, staged.cachePath)
+			}
+			rollbackPublishedCaches()
+			return fmt.Errorf("commit staged cache for %s: %w", staged.url, err)
+		}
+			staged.tempPath = ""
+			published = append(published, publishedCache{cachePath: staged.cachePath, backupPath: backupPath})
+	}
+	if len(stagedSources) > 0 {
+		if err := syncDirFunc(dir); err != nil {
+			rollbackPublishedCaches()
+			return fmt.Errorf("sync published caches dir: %w", err)
+		}
+	}
+
+	if err := saveStateMapFunc(statePath, newStateMap); err != nil {
+		currentState := loadStateMap(statePath)
+		if reflect.DeepEqual(currentState, newStateMap) {
+			r.UpdateGravityData(newRoot, gravityAllowlist)
+			return fmt.Errorf("save gravity state: %w", err)
+		}
+		rollbackPublishedCaches()
+		if restoreErr := saveStateMap(statePath, stateMap); restoreErr != nil {
+			return fmt.Errorf("save gravity state: %w; restore state: %v", err, restoreErr)
+		}
+		return fmt.Errorf("save gravity state: %w", err)
+	}
+	r.UpdateGravityData(newRoot, gravityAllowlist)
+	for _, entry := range published {
+		if err := removeFileFunc(entry.backupPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("cleanup published backup: %w", err)
+		}
+	}
+	if len(stagedSources) > 0 {
+		if err := removeFileFunc(gravityPublishJournalPath(dir)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove gravity publish journal: %w", err)
+		}
+	}
+	if len(stagedSources) > 0 {
+		if err := syncDirFunc(dir); err != nil {
+			return fmt.Errorf("sync post-publish dir: %w", err)
+		}
+	}
 	return nil
+}
+
+func sortedKeys(m map[string]bool) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sanitizedExceptions(exceptions []string) []string {
+	if len(exceptions) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(exceptions))
+	sanitized := make([]string, 0, len(exceptions))
+	for _, domain := range exceptions {
+		domain = normalizeDomain(domain)
+		if !isEffectiveDomain(domain) {
+			continue
+		}
+		if _, exists := seen[domain]; exists {
+			continue
+		}
+		seen[domain] = struct{}{}
+		sanitized = append(sanitized, domain)
+	}
+	return sanitized
+}
+
+func isEffectiveDomain(domain string) bool {
+	if domain == "" {
+		return false
+	}
+	if !strings.Contains(domain, ".") {
+		return false
+	}
+	labels := strings.Split(domain, ".")
+	for _, label := range labels {
+		if label == "" {
+			return false
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }

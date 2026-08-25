@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"strings"
 	"golang.org/x/net/dns/dnsmessage"
+	"sync"
 	"sync/atomic"
 )
 
@@ -13,15 +14,28 @@ type trieNode struct {
 }
 
 type engineState struct {
-	root      *trieNode
-	whitelist map[string]bool
-	blacklist map[string]bool
+	root             *trieNode
+	whitelist        map[string]bool
+	blacklist        map[string]bool
+	gravityAllowlist map[string]bool
 }
 
 // FilterEngine is a concurrency-safe DNS blocklist resolver backed by atomic.Value.
 type FilterEngine struct {
 	state     atomic.Value
+	updateMu  sync.Mutex
 	upstreams []string
+}
+
+func cloneBoolMap(src map[string]bool) map[string]bool {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]bool, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
 }
 
 // NewFilterEngine initializes and returns a new *FilterEngine.
@@ -29,12 +43,32 @@ func NewFilterEngine(upstreams []string) *FilterEngine {
 	e := &FilterEngine{
 		upstreams: upstreams,
 	}
-	e.state.Store(&engineState{
-		root:      &trieNode{},
-		whitelist: make(map[string]bool),
-		blacklist: make(map[string]bool),
-	})
+		e.state.Store(&engineState{
+			root:             &trieNode{},
+			whitelist:        make(map[string]bool),
+			blacklist:        make(map[string]bool),
+			gravityAllowlist: make(map[string]bool),
+		})
 	return e
+}
+
+func matchesDomainSet(domain string, domains map[string]bool) bool {
+	if len(domains) == 0 {
+		return false
+	}
+	end := len(domain)
+	for end > 0 {
+		start := end - 1
+		for start >= 0 && domain[start] != '.' {
+			start--
+		}
+		candidate := domain[start+1:]
+		if domains[candidate] {
+			return true
+		}
+		end = start
+	}
+	return false
 }
 
 func needsNormalization(domain string) bool {
@@ -113,22 +147,44 @@ func BuildTrieFromScanner(scanner *bufio.Scanner) *trieNode {
 
 // UpdateRoot completely replaces the radix tree in a zero-downtime pointer swap.
 func (e *FilterEngine) UpdateRoot(newRoot *trieNode) {
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
+
 	oldState := e.state.Load().(*engineState)
 	newState := &engineState{
-		root:      newRoot,
-		whitelist: oldState.whitelist,
-		blacklist: oldState.blacklist,
+		root:             newRoot,
+		whitelist:        oldState.whitelist,
+		blacklist:        oldState.blacklist,
+		gravityAllowlist: oldState.gravityAllowlist,
+	}
+	e.state.Store(newState)
+}
+
+func (e *FilterEngine) UpdateGravityData(newRoot *trieNode, gravityAllowlist map[string]bool) {
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
+
+	oldState := e.state.Load().(*engineState)
+	newState := &engineState{
+		root:             newRoot,
+		whitelist:        oldState.whitelist,
+		blacklist:        oldState.blacklist,
+		gravityAllowlist: cloneBoolMap(gravityAllowlist),
 	}
 	e.state.Store(newState)
 }
 
 // SetLists updates the whitelist and blacklist.
 func (e *FilterEngine) SetLists(whitelist, blacklist map[string]bool) {
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
+
 	oldState := e.state.Load().(*engineState)
 	newState := &engineState{
-		root:      oldState.root,
-		whitelist: whitelist,
-		blacklist: blacklist,
+		root:             oldState.root,
+		whitelist:        cloneBoolMap(whitelist),
+		blacklist:        cloneBoolMap(blacklist),
+		gravityAllowlist: oldState.gravityAllowlist,
 	}
 	e.state.Store(newState)
 }
@@ -147,11 +203,14 @@ func (e *FilterEngine) Resolve(domain string) bool {
 
 	state := e.state.Load().(*engineState)
 
-	if state.whitelist != nil && state.whitelist[domain] {
-		return false
-	}
 	if state.blacklist != nil && state.blacklist[domain] {
 		return true
+	}
+	if matchesDomainSet(domain, state.whitelist) {
+		return false
+	}
+	if matchesDomainSet(domain, state.gravityAllowlist) {
+		return false
 	}
 
 	if state.root == nil {

@@ -1,6 +1,9 @@
 package dnsd
 
 import (
+	"bufio"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -155,3 +158,98 @@ func TestCanaryDomains(t *testing.T) {
 	}
 }
 
+func TestFilterEngine_ConcurrentRootAndListUpdatesPreserveBoth(t *testing.T) {
+	for i := 0; i < 5000; i++ {
+		r := NewFilterEngine(nil)
+		root := BuildTrieFromScanner(bufio.NewScanner(strings.NewReader("blocked.example.com\n")))
+
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+			r.UpdateRoot(root)
+		}()
+
+		go func() {
+			defer wg.Done()
+			<-start
+			r.SetLists(
+				map[string]bool{"allowed.example.com": true},
+				map[string]bool{"forced.example.com": true},
+			)
+		}()
+
+		close(start)
+		wg.Wait()
+
+		if !r.Resolve("blocked.example.com") {
+			t.Fatalf("iteration %d: lost trie update", i)
+		}
+		if r.Resolve("allowed.example.com") {
+			t.Fatalf("iteration %d: lost whitelist update", i)
+		}
+		if !r.Resolve("forced.example.com") {
+			t.Fatalf("iteration %d: lost blacklist update", i)
+		}
+	}
+}
+
+func TestFilterEngine_SetListsClonesPublishedMaps(t *testing.T) {
+	r := NewFilterEngine(nil)
+	whitelist := map[string]bool{"allowed.example.com": true}
+	blacklist := map[string]bool{"blocked.example.com": true}
+
+	r.SetLists(whitelist, blacklist)
+
+	whitelist["later-allowed.example.com"] = true
+	delete(blacklist, "blocked.example.com")
+	blacklist["later-blocked.example.com"] = true
+
+	if !r.Resolve("blocked.example.com") {
+		t.Fatal("expected originally published blacklist entry to remain active")
+	}
+	if r.Resolve("later-allowed.example.com") {
+		t.Fatal("did not expect post-publication whitelist mutation to affect resolver state")
+	}
+	if r.Resolve("later-blocked.example.com") {
+		t.Fatal("did not expect post-publication blacklist mutation to affect resolver state")
+	}
+}
+
+func TestFilterEngine_GravityAllowlistOverridesParentBlock(t *testing.T) {
+	r := NewFilterEngine(nil)
+	root := BuildTrieFromScanner(bufio.NewScanner(strings.NewReader("example.com\n")))
+
+	r.UpdateGravityData(root, map[string]bool{"ads.example.com": true})
+
+	if r.Resolve("example.com") != true {
+		t.Fatal("expected parent domain to remain blocked")
+	}
+	if r.Resolve("ads.example.com") {
+		t.Fatal("expected gravity allowlist to override inherited parent-domain block")
+	}
+	if r.Resolve("child.ads.example.com") {
+		t.Fatal("expected gravity allowlist to apply to subdomains of the allowed domain")
+	}
+	if !r.Resolve("other.example.com") {
+		t.Fatal("expected unrelated sibling under blocked parent to remain blocked")
+	}
+}
+
+func TestFilterEngine_BlacklistOverridesWhitelistAndGravityAllowlist(t *testing.T) {
+	r := NewFilterEngine(nil)
+	root := BuildTrieFromScanner(bufio.NewScanner(strings.NewReader("example.com\n")))
+
+	r.UpdateGravityData(root, map[string]bool{"ads.example.com": true})
+	r.SetLists(
+		map[string]bool{"ads.example.com": true},
+		map[string]bool{"ads.example.com": true},
+	)
+
+	if !r.Resolve("ads.example.com") {
+		t.Fatal("expected explicit blacklist to override whitelist and gravity allowlist")
+	}
+}
