@@ -42,6 +42,22 @@ type GravityState struct {
 	ETag         string   `json:"etag"`
 	LastModified string   `json:"last_modified"`
 	Exceptions   []string `json:"exceptions,omitempty"`
+	RuleCount    int      `json:"rule_count,omitempty"`
+}
+
+type boundedReader struct {
+	r     io.Reader
+	limit int64
+	read  int64
+}
+
+func (b *boundedReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.read += int64(n)
+	if b.read > b.limit {
+		return n, fmt.Errorf("feed size exceeded maximum limit of %d bytes", b.limit)
+	}
+	return n, err
 }
 
 type gravityPublishJournal struct {
@@ -214,12 +230,20 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 	if err != nil {
 		return false
 	}
-	exceptions := sanitizedExceptions(stateMap[url].Exceptions)
-	valid, err := cacheHasEffectiveRules(f)
+	cachedState := stateMap[url]
+	minRules := 1
+	if cachedState.RuleCount > 10 {
+		minRules = cachedState.RuleCount / 5
+		if minRules < 1 {
+			minRules = 1
+		}
+	}
+	valid, err := cacheHasEffectiveRules(f, minRules)
 	if err != nil || !valid {
 		_ = f.Close()
 		return false
 	}
+	exceptions := sanitizedExceptions(cachedState.Exceptions)
 	*readers = append(*readers, f)
 	*filesToClose = append(*filesToClose, f)
 	for _, domain := range exceptions {
@@ -228,24 +252,28 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 	return true
 }
 
-func cacheHasEffectiveRules(f *os.File) (bool, error) {
+func cacheHasEffectiveRules(f *os.File, minRequired int) (bool, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return false, err
 	}
 	scanner := bufio.NewScanner(f)
+	unique := make(map[string]struct{})
 	for scanner.Scan() {
-		if isEffectiveDomain(normalizeDomain(scanner.Text())) {
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return false, err
-			}
-			return true, nil
+		d := normalizeDomain(scanner.Text())
+		if isEffectiveDomain(d) {
+			unique[d] = struct{}{}
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return false, err
 	}
-	_, err := f.Seek(0, io.SeekStart)
-	return false, err
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	if minRequired < 1 {
+		minRequired = 1
+	}
+	return len(unique) >= minRequired, nil
 }
 
 func gravityPublishJournalPath(dir string) string {
@@ -492,6 +520,13 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 			continue
 		}
 
+		if resp.ContentLength > maxBlocklistResponseBytes {
+			resp.Body.Close()
+			log.Printf("Failed to fetch %s: Content-Length %d exceeds max allowed size %d", url, resp.ContentLength, maxBlocklistResponseBytes)
+			loadCachedSource(dir, url, i, stateMap, &readers, &filesToClose, gravityAllowlist)
+			continue
+		}
+
 		f, tempCache, err := createSiblingTempFileFunc(cachePath)
 		if err != nil {
 			log.Printf("Failed to create temp cache %s: %v", tempCache, err)
@@ -527,7 +562,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		blockCount := 0
 		uniqueBlockDomains := make(map[string]struct{})
 		exceptionCount := 0
-		limitedBody := io.LimitReader(resp.Body, maxBlocklistResponseBytes)
+		limitedBody := &boundedReader{r: resp.Body, limit: maxBlocklistResponseBytes}
 		if ruleAwareParser, ok := parser.(RuleAwareListParser); ok {
 			parseErr = ruleAwareParser.ParseRules(
 				limitedBody,
@@ -578,6 +613,9 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		if writeErr == nil && sourceRequiresMultipleRules(url, parser) && len(uniqueBlockDomains) < 2 {
 			writeErr = fmt.Errorf("source produced insufficient effective block rules")
 		}
+		if writeErr == nil && stateMap[url].RuleCount > 10 && len(uniqueBlockDomains) < stateMap[url].RuleCount/5 {
+			writeErr = fmt.Errorf("source suffered an unexpected rule drop from %d to %d rules", stateMap[url].RuleCount, len(uniqueBlockDomains))
+		}
 
 		if writeErr == nil {
 			if err := writer.Flush(); err != nil {
@@ -620,6 +658,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 				ETag:         resp.Header.Get("ETag"),
 				LastModified: resp.Header.Get("Last-Modified"),
 				Exceptions:   sortedKeys(sourceExceptions),
+				RuleCount:    len(uniqueBlockDomains),
 			},
 		})
 		for domain := range sourceExceptions {
@@ -771,7 +810,7 @@ func sanitizedExceptions(exceptions []string) []string {
 }
 
 func isEffectiveDomain(domain string) bool {
-	if domain == "" {
+	if domain == "" || len(domain) > 253 {
 		return false
 	}
 	if !strings.Contains(domain, ".") {
@@ -779,7 +818,7 @@ func isEffectiveDomain(domain string) bool {
 	}
 	labels := strings.Split(domain, ".")
 	for _, label := range labels {
-		if label == "" {
+		if label == "" || len(label) > 63 {
 			return false
 		}
 		if label[0] == '-' || label[len(label)-1] == '-' {

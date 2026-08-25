@@ -246,16 +246,36 @@ func (e *FilterEngine) Resolve(domain string) bool {
 	return false
 }
 
-// AddBlockedDomain is provided for test compatibility.
-// It mutates the active tree in place without concurrency safety.
+func cloneTrie(node *trieNode) *trieNode {
+	if node == nil {
+		return &trieNode{}
+	}
+	newNode := &trieNode{
+		isEnd: node.isEnd,
+	}
+	if len(node.children) > 0 {
+		newNode.children = make(map[string]*trieNode, len(node.children))
+		for k, v := range node.children {
+			newNode.children[k] = cloneTrie(v)
+		}
+	}
+	return newNode
+}
+
+// AddBlockedDomain inserts a domain into the active trie using atomic copy-on-write semantics.
 func (e *FilterEngine) AddBlockedDomain(domain string) {
-	state := e.state.Load().(*engineState)
 	domain = normalizeDomain(domain)
 	if domain == "" {
 		return
 	}
+	e.updateMu.Lock()
+	defer e.updateMu.Unlock()
+
+	oldState := e.state.Load().(*engineState)
+	newRoot := cloneTrie(oldState.root)
+
 	parts := strings.Split(domain, ".")
-	node := state.root
+	node := newRoot
 	inserted := false
 	for i := len(parts) - 1; i >= 0; i-- {
 		part := parts[i]
@@ -278,6 +298,14 @@ func (e *FilterEngine) AddBlockedDomain(domain string) {
 		node.isEnd = true
 		node.children = nil
 	}
+
+	newState := &engineState{
+		root:             newRoot,
+		whitelist:        oldState.whitelist,
+		blacklist:        oldState.blacklist,
+		gravityAllowlist: oldState.gravityAllowlist,
+	}
+	e.state.Store(newState)
 }
 
 func (e *FilterEngine) Process(req []byte) (resp []byte, block bool, err error) {

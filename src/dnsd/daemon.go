@@ -34,16 +34,31 @@ func NewDaemon(cfg Config) *Daemon {
 
 func (d *Daemon) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	started := false
+	var cleanups []func()
+	defer func() {
+		if !started {
+			for i := len(cleanups) - 1; i >= 0; i-- {
+				cleanups[i]()
+			}
+		}
+	}()
+
 	exclusionManager, err := StartExclusionWatcher(d.config.ExclusionsPath)
 	if err != nil {
 		return err
 	}
+	cleanups = append(cleanups, func() { exclusionManager.Close() })
 	defer exclusionManager.Close()
 
 	r := NewFilterEngine(d.upstreams)
 
 	// Initialize the monitor and fix the leak
 	StartProcessMonitor(ctx)
+	cleanups = append(cleanups, func() { StopProcessMonitor() })
+
 	if err := StartGravitySync(ctx, d.config.DataDir, r); err != nil {
 		return fmt.Errorf("failed to initialize gravity blocklists: %w", err)
 	}
@@ -51,6 +66,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err != nil {
 		log.Printf("Warning: failed to start user list watcher: %v", err)
 	} else {
+		cleanups = append(cleanups, func() { userLists.Close() })
 		defer userLists.Close()
 	}
 
@@ -69,6 +85,8 @@ func (d *Daemon) Start(ctx context.Context) error {
 	})
 	if err != nil {
 		log.Printf("Warning: SCDynamicStore monitor failed to start: %v", err)
+	} else {
+		cleanups = append(cleanups, func() { StopVPNMonitor() })
 	}
 
 	addr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: d.config.Port}
@@ -76,6 +94,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	cleanups = append(cleanups, func() { conn.Close() })
 	defer conn.Close()
 	log.Printf("Blackhole DNS server listening on 127.0.0.1:%d...", d.config.Port)
 
@@ -112,6 +131,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 		go d.watchIPCServerErrors(ipcServer, cancel)
 	}
 
+	started = true
 	go d.handleSignals(ctx, cancel, conn, ipcServer)
 	d.runMessageLoop(conn, exclusionManager, r, rb, stats)
 	return daemonRunResult(ctx)
@@ -139,6 +159,7 @@ func daemonRunResult(ctx context.Context) error {
 func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFunc, conn *net.UDPConn, ipcServer *IPCServer) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigChan)
 	
 	select {
 	case sig := <-sigChan:
@@ -148,6 +169,7 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFu
 	}
 	
 	StopVPNMonitor()
+	StopProcessMonitor()
 	
 	// Gracefully shut down the IPC HTTP server if it's running
 	if ipcServer != nil {
@@ -236,7 +258,28 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 	})
 }
 
+type dnsQueryJob struct {
+	payload []byte
+	cliAddr *net.UDPAddr
+}
+
 func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
+	const workerCount = 64
+	const queueSize = 2048
+
+	queryQueue := make(chan dnsQueryJob, queueSize)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range queryQueue {
+				d.processQuery(job.payload, job.cliAddr, conn, exclusionManager, r, rb, stats)
+			}
+		}()
+	}
+
 	for {
 		buf := make([]byte, 4096)
 		n, cliAddr, err := conn.ReadFromUDP(buf)
@@ -251,14 +294,36 @@ func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionMa
 		payload := make([]byte, n)
 		copy(payload, buf[:n])
 
-		go d.processQuery(payload, cliAddr, conn, exclusionManager, r, rb, stats)
+		select {
+		case queryQueue <- dnsQueryJob{payload: payload, cliAddr: cliAddr}:
+		default:
+			// Overload: queue is full, return fast SERVFAIL
+			d.sendServfail(conn, cliAddr, payload)
+		}
+	}
+
+	close(queryQueue)
+	wg.Wait()
+}
+
+func (d *Daemon) sendServfail(conn *net.UDPConn, cliAddr *net.UDPAddr, raw []byte) {
+	var msg dnsmessage.Message
+	if err := msg.Unpack(raw); err == nil {
+		msg.Header.Response = true
+		msg.Header.RCode = dnsmessage.RCodeServerFailure
+		msg.Answers = nil
+		msg.Authorities = nil
+		msg.Additionals = nil
+		if packed, err := msg.Pack(); err == nil {
+			_, _ = conn.WriteToUDP(packed, cliAddr)
+		}
 	}
 }
 
 func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) {
 	if len(msg.Questions) > 0 {
 		q := msg.Questions[0]
-		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type)); ok {
+		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type), uint16(q.Class)); ok {
 			cp := *cachedMsg
 			cp.Header.ID = msg.Header.ID
 			resp, err := cp.Pack()
@@ -277,7 +342,7 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 	if err == nil {
 		var respMsg dnsmessage.Message
 		if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
-			d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), &respMsg)
+			d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), &respMsg)
 		}
 		_, _ = conn.WriteToUDP(respRaw, cliAddr)
 	}

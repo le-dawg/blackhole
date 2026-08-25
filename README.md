@@ -135,7 +135,7 @@ This endpoint outputs a point-in-time snapshot of the circular ring buffer as ND
 
 | Field | Type | Description |
 |---|---|---|
-| `timestamp` | String | ISO-8601 timestamp of the query |
+| `timestamp` | String | RFC3339Nano timestamp of the query (e.g., `2026-08-25T22:11:51.123456789Z`) |
 | `domain` | String | The requested domain name |
 | `queryType` | Integer | DNS query type (e.g., 1 for A, 28 for AAAA) |
 | `status` | String | Outcome (`Allowed`, `Blocked`, `Excluded`) |

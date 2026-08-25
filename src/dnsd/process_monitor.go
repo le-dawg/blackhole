@@ -225,6 +225,17 @@ var (
 
 func ActiveWorkersCount() int32 { return activeWorkersCount.Load() }
 
+func StopProcessMonitor() {
+	processMonitorMu.Lock()
+	defer processMonitorMu.Unlock()
+
+	if processMonitorCancel != nil {
+		processMonitorCancel()
+		processMonitorWg.Wait()
+		processMonitorCancel = nil
+	}
+}
+
 func StartProcessMonitor(ctx context.Context) {
 	processMonitorMu.Lock()
 	defer processMonitorMu.Unlock()
@@ -373,7 +384,7 @@ func CheckPIDPatterns(pid int, patterns []string) string {
 	return matchPattern(pid, patterns)
 }
 
-func resolveMetadataForPID(pid int, patterns []string) (ProcessMetadata, error) {
+func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
 	pathBuffer := make([]byte, C.PROC_PIDPATHINFO_MAXSIZE)
 	ret := int(C.proc_pidpath(C.int(pid), unsafe.Pointer(&pathBuffer[0]), C.uint32_t(len(pathBuffer))))
 	if ret <= 0 {
@@ -391,13 +402,6 @@ func resolveMetadataForPID(pid int, patterns []string) (ProcessMetadata, error) 
 		bundleID = extractBundleID(procName)
 	}
 
-	matched := matchPattern(pid, patterns)
-	if matched != "" {
-		if !strings.Contains(strings.ToLower(procName), strings.ToLower(matched)) {
-			procName = procName + "-" + matched
-		}
-	}
-
 	return ProcessMetadata{
 		Name:     procName,
 		BundleID: bundleID,
@@ -409,42 +413,53 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 	entry, found := pidMetadataCache[pid]
 	pidMetadataCacheMu.RUnlock()
 
-	if found && time.Since(entry.createdAt) < 1*time.Minute {
-		if entry.err != nil {
-			return "Unknown", "", entry.err
-		}
-		return entry.metadata.Name, entry.metadata.BundleID, nil
-	}
-
-	metadataResolveMu.Lock()
-	defer metadataResolveMu.Unlock()
-
-	// Double check
-	pidMetadataCacheMu.RLock()
-	entry, found = pidMetadataCache[pid]
-	pidMetadataCacheMu.RUnlock()
+	var meta ProcessMetadata
+	var err error
 
 	if found && time.Since(entry.createdAt) < 1*time.Minute {
 		if entry.err != nil {
 			return "Unknown", "", entry.err
 		}
-		return entry.metadata.Name, entry.metadata.BundleID, nil
+		meta = entry.metadata
+	} else {
+		metadataResolveMu.Lock()
+		// Double check
+		pidMetadataCacheMu.RLock()
+		entry, found = pidMetadataCache[pid]
+		pidMetadataCacheMu.RUnlock()
+
+		if found && time.Since(entry.createdAt) < 1*time.Minute {
+			metadataResolveMu.Unlock()
+			if entry.err != nil {
+				return "Unknown", "", entry.err
+			}
+			meta = entry.metadata
+		} else {
+			meta, err = resolveMetadataForPID(pid)
+			pidMetadataCacheMu.Lock()
+			pidMetadataCache[pid] = pidMetadataEntry{
+				metadata:  meta,
+				createdAt: time.Now(),
+				err:       err,
+			}
+			pidMetadataCacheMu.Unlock()
+			metadataResolveMu.Unlock()
+
+			if err != nil {
+				return "Unknown", "", err
+			}
+		}
 	}
 
-	meta, err := resolveMetadataForPID(pid, patterns)
-
-	pidMetadataCacheMu.Lock()
-	pidMetadataCache[pid] = pidMetadataEntry{
-		metadata:  meta,
-		createdAt: time.Now(),
-		err:       err,
+	procName := meta.Name
+	if len(patterns) > 0 {
+		matched := matchPattern(pid, patterns)
+		if matched != "" && !strings.Contains(strings.ToLower(procName), strings.ToLower(matched)) {
+			procName = procName + "-" + matched
+		}
 	}
-	pidMetadataCacheMu.Unlock()
 
-	if err != nil {
-		return "Unknown", "", err
-	}
-	return meta.Name, meta.BundleID, nil
+	return procName, meta.BundleID, nil
 }
 
 // GetProcessInfoForPort queries the system APIs to map an active TCP/UDP local port

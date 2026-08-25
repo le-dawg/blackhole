@@ -20,11 +20,14 @@ type ExcludedApp struct {
 }
 
 type ExclusionManager struct {
-	path       string
-	exclusions []ExcludedApp
-	mu         sync.RWMutex
-	watcher    *fsnotify.Watcher
-	closeChan  chan struct{}
+	path          string
+	exclusions    []ExcludedApp
+	mu            sync.RWMutex
+	watcher       *fsnotify.Watcher
+	closeChan     chan struct{}
+	closeOnce     sync.Once
+	debounceTimer *time.Timer
+	timerMu       sync.Mutex
 }
 
 func StartExclusionWatcher(path string) (*ExclusionManager, error) {
@@ -53,8 +56,6 @@ func StartExclusionWatcher(path string) (*ExclusionManager, error) {
 	}
 
 	go func() {
-		var debounceTimer *time.Timer
-		var mu sync.Mutex
 		for {
 			select {
 			case <-em.closeChan:
@@ -65,14 +66,14 @@ func StartExclusionWatcher(path string) (*ExclusionManager, error) {
 				}
 				// Filter events for our specific file
 				if filepath.Clean(event.Name) == filepath.Clean(em.path) {
-					mu.Lock()
-					if debounceTimer != nil {
-						debounceTimer.Stop()
+					em.timerMu.Lock()
+					if em.debounceTimer != nil {
+						em.debounceTimer.Stop()
 					}
-					debounceTimer = time.AfterFunc(50*time.Millisecond, func() {
+					em.debounceTimer = time.AfterFunc(50*time.Millisecond, func() {
 						em.reload()
 					})
-					mu.Unlock()
+					em.timerMu.Unlock()
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
@@ -136,6 +137,16 @@ func (em *ExclusionManager) GetCliPatterns() []string {
 }
 
 func (em *ExclusionManager) Close() error {
-	close(em.closeChan)
-	return em.watcher.Close()
+	var err error
+	em.closeOnce.Do(func() {
+		close(em.closeChan)
+		em.timerMu.Lock()
+		if em.debounceTimer != nil {
+			em.debounceTimer.Stop()
+			em.debounceTimer = nil
+		}
+		em.timerMu.Unlock()
+		err = em.watcher.Close()
+	})
+	return err
 }

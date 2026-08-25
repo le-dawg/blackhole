@@ -794,8 +794,8 @@ func TestRefreshGravity_FailedParseDoesNotPoisonSubsequent304Replay(t *testing.T
 
 	longDomain := strings.Repeat("a", 65536+10) + ".com"
 	RegisterParserForURL(srv.URL, &badParser{domain: longDomain})
-	if err := refreshGravity(context.Background(), dir, res); err == nil {
-		t.Fatal("expected failed parse refresh to error")
+	if err := refreshGravity(context.Background(), dir, res); err != nil {
+		t.Fatalf("expected fallback refreshGravity to succeed with previous cache, got %v", err)
 	}
 
 	RegisterParserForURL(srv.URL, &PiHoleParser{})

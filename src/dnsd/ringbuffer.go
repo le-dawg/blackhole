@@ -25,6 +25,9 @@ type RingBuffer struct {
 }
 
 func NewRingBuffer(size int) *RingBuffer {
+	if size <= 0 {
+		size = 1000
+	}
 	return &RingBuffer{
 		records: make([]QueryRecord, size),
 		size:    size,

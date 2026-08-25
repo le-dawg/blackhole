@@ -39,9 +39,7 @@ func (p *BlocklistParser) Parse(r io.Reader, onDomain func(string)) error {
 
 func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onException func(string)) error {
 	scanner := bufio.NewScanner(r)
-	blockExceptions := make(map[string]struct{})
 	badFilters := make(map[string]struct{})
-	exceptionsSeen := make(map[string]struct{})
 	lineCount := 0
 	rulesFile, err := os.CreateTemp("", "blackhole-blocklist-rules-*")
 	if err != nil {
@@ -51,11 +49,11 @@ func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onExcept
 	defer rulesFile.Close()
 
 	rulesWriter := bufio.NewWriter(rulesFile)
-	writeRule := func(ruleKey, domain string) error {
+	writeRule := func(kind, ruleKey, domain string) error {
 		if domain == "" {
 			return nil
 		}
-		_, err := rulesWriter.WriteString(ruleKey + "\t" + domain + "\n")
+		_, err := rulesWriter.WriteString(kind + "\t" + ruleKey + "\t" + domain + "\n")
 		return err
 	}
 
@@ -84,14 +82,12 @@ func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onExcept
 			}
 			switch action {
 			case adGuardBlock:
-				if err := writeRule(ruleKey, domain); err != nil {
+				if err := writeRule("B", ruleKey, domain); err != nil {
 					return err
 				}
 			case adGuardException:
-				blockExceptions[domain] = struct{}{}
-				if _, seen := exceptionsSeen[domain]; !seen {
-					exceptionsSeen[domain] = struct{}{}
-					onException(domain)
+				if err := writeRule("E", ruleKey, domain); err != nil {
+					return err
 				}
 			case adGuardBadfilter:
 				badFilters[ruleKey] = struct{}{}
@@ -102,14 +98,14 @@ func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onExcept
 		fields := strings.Fields(line)
 		if len(fields) > 1 {
 			if isHostsMappingIP(fields[0]) {
-					for _, host := range fields[1:] {
-						host = normalizeDomain(host)
-						if host != "" {
-							if err := writeRule(host, host); err != nil {
-								return err
-							}
+				for _, host := range fields[1:] {
+					host = normalizeDomain(host)
+					if host != "" {
+						if err := writeRule("B", host, host); err != nil {
+							return err
 						}
 					}
+				}
 				continue
 			} else {
 				continue
@@ -119,7 +115,7 @@ func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onExcept
 		line = normalizeDomain(line)
 
 		if line != "" {
-			if err := writeRule(line, line); err != nil {
+			if err := writeRule("B", line, line); err != nil {
 				return err
 			}
 		}
@@ -130,35 +126,65 @@ func (p *BlocklistParser) ParseRules(r io.Reader, onBlock func(string), onExcept
 	if err := rulesWriter.Flush(); err != nil {
 		return err
 	}
+
+	// Pass 2A: Collect effective exceptions (unsuppressed by badfilter)
 	if _, err := rulesFile.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-
-	emitted := make(map[string]struct{})
-	rulesScanner := bufio.NewScanner(rulesFile)
-	for rulesScanner.Scan() {
-		line := rulesScanner.Text()
-		tabIdx := strings.IndexByte(line, '\t')
-		if tabIdx == -1 {
+	blockExceptions := make(map[string]struct{})
+	pass2Scanner := bufio.NewScanner(rulesFile)
+	for pass2Scanner.Scan() {
+		line := pass2Scanner.Text()
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
 			continue
 		}
-		ruleKey := line[:tabIdx]
-		domain := line[tabIdx+1:]
+		kind, ruleKey, domain := parts[0], parts[1], parts[2]
+		if kind == "E" {
+			if _, suppressed := badFilters[ruleKey]; !suppressed {
+				blockExceptions[domain] = struct{}{}
+			}
+		}
+	}
+	if err := pass2Scanner.Err(); err != nil {
+		return err
+	}
+
+	// Pass 2B: Emit blocks and exceptions
+	if _, err := rulesFile.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	emittedBlocks := make(map[string]struct{})
+	emittedExceptions := make(map[string]struct{})
+	pass2BScanner := bufio.NewScanner(rulesFile)
+	for pass2BScanner.Scan() {
+		line := pass2BScanner.Text()
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		kind, ruleKey, domain := parts[0], parts[1], parts[2]
 		if _, suppressed := badFilters[ruleKey]; suppressed {
 			continue
 		}
-		if _, excepted := blockExceptions[domain]; excepted {
-			continue
-		}
-		if _, seen := emitted[domain]; seen {
-			continue
-		}
-		emitted[domain] = struct{}{}
-		if domain != "" {
+
+		if kind == "E" {
+			if _, seen := emittedExceptions[domain]; !seen {
+				emittedExceptions[domain] = struct{}{}
+				onException(domain)
+			}
+		} else if kind == "B" {
+			if _, excepted := blockExceptions[domain]; excepted {
+				continue
+			}
+			if _, seen := emittedBlocks[domain]; seen {
+				continue
+			}
+			emittedBlocks[domain] = struct{}{}
 			onBlock(domain)
 		}
 	}
-	if err := rulesScanner.Err(); err != nil {
+	if err := pass2BScanner.Err(); err != nil {
 		return err
 	}
 	return nil
@@ -175,17 +201,23 @@ const (
 func parseAdGuardRule(line string) (domain string, ruleKey string, action adGuardRuleAction, handled bool) {
 	switch {
 	case strings.HasPrefix(line, "@@||"):
-		domain, ruleKey, _ = extractAdGuardRule(line[4:])
-		return domain, ruleKey, adGuardException, true
+		domain, ruleKey, hasBadfilter := extractAdGuardRule(line[4:])
+		if domain == "" {
+			return "", "", adGuardException, true
+		}
+		if hasBadfilter {
+			return domain, "@@||" + ruleKey, adGuardBadfilter, true
+		}
+		return domain, "@@||" + ruleKey, adGuardException, true
 	case strings.HasPrefix(line, "||"):
 		domain, ruleKey, hasBadfilter := extractAdGuardRule(line[2:])
 		if domain == "" {
 			return "", "", adGuardBlock, true
 		}
 		if hasBadfilter {
-			return domain, ruleKey, adGuardBadfilter, true
+			return domain, "||" + ruleKey, adGuardBadfilter, true
 		}
-		return domain, ruleKey, adGuardBlock, true
+		return domain, "||" + ruleKey, adGuardBlock, true
 	default:
 		return "", "", adGuardBlock, false
 	}

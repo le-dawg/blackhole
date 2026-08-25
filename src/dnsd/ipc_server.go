@@ -173,6 +173,10 @@ func StartIPCServer(listener net.Listener, rb *RingBuffer, stats *GlobalStats) (
 			http.Error(w, "invalid request: trailing data", http.StatusBadRequest)
 			return
 		}
+		if req.DurationSeconds > 2592000 { // Max 30 days
+			http.Error(w, "invalid request: duration exceeds 30 days", http.StatusBadRequest)
+			return
+		}
 
 		pauseMutex.Lock()
 		pauseGeneration++

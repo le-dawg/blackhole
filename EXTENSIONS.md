@@ -26,7 +26,7 @@ package main
 
 import (
     "log"
-    "github.com/blackhole/blackhole/src/dnsd"
+    "blackhole/src/dnsd"
 )
 
 // 1. Define your custom filter
@@ -50,29 +50,37 @@ func main() {
 }
 ```
 
-## Blocklist Parser Interface
+## Blocklist Parser Interfaces
 
-By default, Blackhole supports standard hosts files and Pi-hole gravity lists. To support proprietary or custom threat feed formats (e.g., YAML-based enterprise feeds), you can implement the `ListParser` interface:
+By default, Blackhole supports standard `/etc/hosts` files, Pi-hole gravity lists, and AdGuard syntax lists. To support proprietary or custom threat feed formats (e.g., YAML-based enterprise feeds), you can implement `ListParser` or `RuleAwareListParser`:
 
+### `ListParser`
 ```go
 type ListParser interface {
     Parse(r io.Reader, onDomain func(string)) error
 }
 ```
 
-Your parser should read from `r` and call `onDomain(domain)` for every domain that needs to be blocked. Instead of modifying `gravity.go` directly, you can inject a custom parser at runtime using the `RegisterParserForURL` API. Create your own parser struct that implements the `ListParser` interface and pass it to your gravity or blocklist instance:
+### `RuleAwareListParser`
+```go
+type RuleAwareListParser interface {
+    ParseRules(r io.Reader, onBlock func(string), onException func(string)) error
+}
+```
+
+Your parser should read from `r` and call `onBlock(domain)` for every domain to block and `onException(domain)` for every domain exception (allowlist). Instead of modifying `gravity.go` directly, you can inject a custom parser at runtime using the `RegisterParserForURL` API:
 
 ```go
 // Define your custom parser
 type MyParser struct {}
 
-func (p MyParser) Parse(r io.Reader, onDomain func(string)) error {
+func (p MyParser) ParseRules(r io.Reader, onBlock func(string), onException func(string)) error {
     // Custom parsing logic here
-    // call onDomain(domain) for each domain found
+    // call onBlock(domain) or onException(domain)
     return nil
 }
 
-// Inject it using the API
+// Inject it using the API (longest prefix matching)
 dnsd.RegisterParserForURL("https://example.com/list", MyParser{})
 ```
 

@@ -23,6 +23,9 @@ type DNSCache struct {
 }
 
 func NewDNSCache(max int) *DNSCache {
+	if max <= 0 {
+		max = 1000
+	}
 	return &DNSCache{
 		entries:    make(map[string]*list.Element),
 		lruList:    list.New(),
@@ -30,8 +33,8 @@ func NewDNSCache(max int) *DNSCache {
 	}
 }
 
-func cacheKey(qname string, qtype uint16) string {
-	return fmt.Sprintf("%s|%d", qname, qtype)
+func cacheKey(qname string, qtype, qclass uint16) string {
+	return fmt.Sprintf("%s|%d|%d", qname, qtype, qclass)
 }
 
 func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
@@ -55,11 +58,11 @@ func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
 	return &msgCopy
 }
 
-func (c *DNSCache) Get(qname string, qtype uint16) (*dnsmessage.Message, bool) {
+func (c *DNSCache) Get(qname string, qtype, qclass uint16) (*dnsmessage.Message, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype)
+	key := cacheKey(qname, qtype, qclass)
 	elem, ok := c.entries[key]
 	if !ok {
 		return nil, false
@@ -82,11 +85,17 @@ func (c *DNSCache) Get(qname string, qtype uint16) (*dnsmessage.Message, bool) {
 	for i := range msgCopy.Answers {
 		msgCopy.Answers[i].Header.TTL = ttlRemaining
 	}
+	for i := range msgCopy.Authorities {
+		msgCopy.Authorities[i].Header.TTL = ttlRemaining
+	}
+	for i := range msgCopy.Additionals {
+		msgCopy.Additionals[i].Header.TTL = ttlRemaining
+	}
 
 	return msgCopy, true
 }
 
-func (c *DNSCache) Set(qname string, qtype uint16, msg *dnsmessage.Message) {
+func (c *DNSCache) Set(qname string, qtype, qclass uint16, msg *dnsmessage.Message) {
 	if len(msg.Answers) == 0 {
 		return
 	}
@@ -94,12 +103,17 @@ func (c *DNSCache) Set(qname string, qtype uint16, msg *dnsmessage.Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype)
+	key := cacheKey(qname, qtype, qclass)
 
 	var minTTL uint32 = msg.Answers[0].Header.TTL
 	for _, ans := range msg.Answers {
 		if ans.Header.TTL < minTTL {
 			minTTL = ans.Header.TTL
+		}
+	}
+	for _, auth := range msg.Authorities {
+		if auth.Header.TTL < minTTL {
+			minTTL = auth.Header.TTL
 		}
 	}
 

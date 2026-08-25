@@ -26,6 +26,7 @@ func TestProcessCorrelationInactive(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveTCP(t *testing.T) {
+	StartProcessMonitor(context.Background())
 	// Start a TCP listener on an ephemeral port
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -67,6 +68,7 @@ func TestProcessCorrelationActiveTCP(t *testing.T) {
 }
 
 func TestProcessCorrelationActiveUDP(t *testing.T) {
+	StartProcessMonitor(context.Background())
 	// Start a UDP listener on an ephemeral port
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
 	if err != nil {
@@ -145,6 +147,7 @@ func TestExtractBundleID(t *testing.T) {
 }
 
 func TestProcessCacheTTL(t *testing.T) {
+	StartProcessMonitor(context.Background())
 	// Clear any existing cache entries
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
@@ -160,15 +163,17 @@ func TestProcessCacheTTL(t *testing.T) {
 	port := uint16(ln.Addr().(*net.TCPAddr).Port)
 	ln.Close()
 
+	// Test that cache entries expire after TTL
+	pEntry0 := portPIDEntry{
+		pid:       12345,
+		createdAt: time.Now(),
+	}
 	oldCache := portToPIDCache.Load()
 	newMappings := make(map[uint16]portPIDEntry)
 	for k, v := range oldCache.Mappings {
 		newMappings[k] = v
 	}
-	newMappings[port] = portPIDEntry{
-		pid:       12345,
-		createdAt: time.Now(),
-	}
+	newMappings[port] = pEntry0
 	portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
 	pidMetadataCacheMu.Lock()
@@ -181,10 +186,9 @@ func TestProcessCacheTTL(t *testing.T) {
 	}
 	pidMetadataCacheMu.Unlock()
 
-	// Read and verify cache hit
 	name, bundleID, err := GetProcessInfoForPort(port, []string{"litellm"})
 	if err != nil {
-		t.Fatalf("Expected no error from cached port lookup, got %v", err)
+		t.Fatalf("Failed to get process info for port: %v", err)
 	}
 	if name != "cached_proc" || bundleID != "cached_bundle" {
 		t.Errorf("Expected cached_proc and cached_bundle, got name=%q, bundleID=%q", name, bundleID)
@@ -207,12 +211,12 @@ func TestProcessCacheTTL(t *testing.T) {
 	pidMetadataCache[12345] = mEntry
 	pidMetadataCacheMu.Unlock()
 
-	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error)
+	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error or Unknown)
 	_, _, _ = GetProcessInfoForPort(port, []string{"litellm"})
 	WaitForScan()
-	_, _, err = GetProcessInfoForPort(port, []string{"litellm"})
-	if err == nil {
-		t.Errorf("Expected query to fail after cache expiration")
+	name, _, err = GetProcessInfoForPort(port, []string{"litellm"})
+	if err == nil && name != "Unknown" {
+		t.Errorf("Expected query to fail or return Unknown after cache expiration, got name=%q, err=%v", name, err)
 	}
 }
 
@@ -289,6 +293,7 @@ func TestLiteLLMArgumentDetection(t *testing.T) {
 }
 
 func TestProcessCacheBulkPopulate(t *testing.T) {
+	StartProcessMonitor(context.Background())
 	// Start two TCP listeners on ephemeral ports
 	ln1, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

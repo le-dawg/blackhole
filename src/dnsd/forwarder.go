@@ -19,30 +19,43 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		return err
 	}
 
+	if !resp.Header.Response {
+		return errors.New("upstream returned non-response message")
+	}
+
 	if req.Header.ID != resp.Header.ID {
 		return errors.New("txid mismatch")
 	}
 
-	if len(req.Questions) == 0 || len(resp.Questions) == 0 {
-		return errors.New("missing questions")
+	if resp.Header.OpCode != req.Header.OpCode {
+		return errors.New("opcode mismatch")
+	}
+
+	if len(req.Questions) != 1 || len(resp.Questions) != 1 {
+		return errors.New("invalid question cardinality")
 	}
 
 	q := req.Questions[0]
 	rq := resp.Questions[0]
-	// FIX: Explicitly check QCLASS in addition to Name and Type
 	if q.Name != rq.Name || q.Type != rq.Type || q.Class != rq.Class {
 		return errors.New("qname/qtype/qclass mismatch")
 	}
 
+	if len(resp.Answers) > 100 || len(resp.Authorities) > 100 || len(resp.Additionals) > 100 {
+		return errors.New("excessive resource records")
+	}
+
 	qNameStr := q.Name.String()
 	
-	// Pass 1: Build the CNAME chain
+	// Pass 1: Build the CNAME chain with maximum 8 hops
 	validNames := make(map[string]bool)
 	validNames[qNameStr] = true
 
+	hops := 0
 	changed := true
-	for changed {
+	for changed && hops < 8 {
 		changed = false
+		hops++
 		for _, ans := range resp.Answers {
 			ansName := ans.Header.Name.String()
 			if validNames[ansName] {
@@ -58,7 +71,6 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 	}
 
 	// Pass 2: Strict validation that all answers are in the valid names map
-	// FIX: Removed the loose strings.HasSuffix check
 	for _, ans := range resp.Answers {
 		ansName := ans.Header.Name.String()
 		if !validNames[ansName] {

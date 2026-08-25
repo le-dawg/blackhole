@@ -25,9 +25,9 @@ func TestDNSCache(t *testing.T) {
 		},
 	}
 	
-	cache.Set("example.com.", uint16(dnsmessage.TypeA), msg)
+	cache.Set("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg)
 	
-	cachedMsg, hit := cache.Get("example.com.", uint16(dnsmessage.TypeA))
+	cachedMsg, hit := cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET))
 	if !hit {
 		t.Fatal("expected cache hit")
 	}
@@ -36,10 +36,10 @@ func TestDNSCache(t *testing.T) {
 	}
 	
 	// Test eviction
-	cache.Set("example2.com.", uint16(dnsmessage.TypeA), msg)
-	cache.Set("example3.com.", uint16(dnsmessage.TypeA), msg) // Should evict example.com
+	cache.Set("example2.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg)
+	cache.Set("example3.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET), msg) // Should evict example.com
 	
-	_, hit = cache.Get("example.com.", uint16(dnsmessage.TypeA))
+	_, hit = cache.Get("example.com.", uint16(dnsmessage.TypeA), uint16(dnsmessage.ClassINET))
 	if hit {
 		t.Fatal("expected example.com. to be evicted")
 	}
