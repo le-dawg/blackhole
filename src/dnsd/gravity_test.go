@@ -3,8 +3,10 @@ package dnsd
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -140,10 +142,11 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 		t.Fatalf("Failed to create cache for 304 server: %v", err)
 	}
 
-	// Set state map to simulate cached ETag
+	// Set state map to simulate cached ETag with valid SHA-256
+	hash304 := fmt.Sprintf("%x", sha256.Sum256([]byte("domain304.com\n")))
 	statePath := filepath.Join(dir, "gravity.state.json")
 	if err := saveStateMap(statePath, map[string]GravityState{
-		srv304.URL: {ETag: "old-etag"},
+		srv304.URL: {ETag: "old-etag", SHA256: hash304},
 	}); err != nil {
 		t.Fatalf("failed to save state map: %v", err)
 	}
@@ -548,11 +551,13 @@ func TestRefreshGravity_LegacyCacheFallbackOnNotModified(t *testing.T) {
 	DefaultLists = []string{url}
 
 	legacyCachePath := filepath.Join(dir, "gravity-0.cache")
-	if err := os.WriteFile(legacyCachePath, []byte("domain-legacy.example\n"), 0644); err != nil {
+	legacyContent := []byte("domain-legacy.example\n")
+	legacyHash := fmt.Sprintf("%x", sha256.Sum256(legacyContent))
+	if err := os.WriteFile(legacyCachePath, legacyContent, 0644); err != nil {
 		t.Fatalf("failed to seed legacy cache: %v", err)
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
-		url: {ETag: "legacy-etag"},
+		url: {ETag: "legacy-etag", SHA256: legacyHash},
 	}); err != nil {
 		t.Fatalf("failed to save state map: %v", err)
 	}
@@ -814,11 +819,13 @@ func TestRefreshGravity_FetchFailureUsesSharedFallbackAndExceptions(t *testing.T
 	DefaultLists = []string{url}
 
 	cachePath := cachePathForURL(dir, url)
-	if err := os.WriteFile(cachePath, []byte("example.com\n"), 0644); err != nil {
+	cacheContent := []byte("example.com\n")
+	cacheHash := fmt.Sprintf("%x", sha256.Sum256(cacheContent))
+	if err := os.WriteFile(cachePath, cacheContent, 0644); err != nil {
 		t.Fatalf("failed to seed cache: %v", err)
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
-		url: {Exceptions: []string{"ads.example.com"}},
+		url: {Exceptions: []string{"ads.example.com"}, SHA256: cacheHash},
 	}); err != nil {
 		t.Fatalf("failed to save state map: %v", err)
 	}
@@ -1449,23 +1456,27 @@ func TestRefreshGravity_JournalRecoveryRestoresOldGeneration(t *testing.T) {
 
 	cachePath := cachePathForURL(dir, srv.URL)
 	backupPath := cachePath + ".bak"
-	if err := os.WriteFile(cachePath, []byte("new.example\n"), 0644); err != nil {
+	oldContent := []byte("old.example\n")
+	newContent := []byte("new.example\n")
+	oldHash := fmt.Sprintf("%x", sha256.Sum256(oldContent))
+	newHash := fmt.Sprintf("%x", sha256.Sum256(newContent))
+	if err := os.WriteFile(cachePath, newContent, 0644); err != nil {
 		t.Fatalf("failed to seed live cache: %v", err)
 	}
-	if err := os.WriteFile(backupPath, []byte("old.example\n"), 0644); err != nil {
+	if err := os.WriteFile(backupPath, oldContent, 0644); err != nil {
 		t.Fatalf("failed to seed backup cache: %v", err)
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
-		srv.URL: {ETag: "etag-old"},
+		srv.URL: {ETag: "etag-old", SHA256: oldHash},
 	}); err != nil {
 		t.Fatalf("failed to seed old state map: %v", err)
 	}
 	if err := saveGravityPublishJournal(
 		dir,
-		map[string]GravityState{srv.URL: {ETag: "etag-old"}},
+		map[string]GravityState{srv.URL: {ETag: "etag-old", SHA256: oldHash}},
 		map[string]GravityState{
 			gravityStateMetaKey: {ETag: "commit-new"},
-			srv.URL:             {ETag: "etag-new"},
+			srv.URL:             {ETag: "etag-new", SHA256: newHash},
 		},
 		[]gravityJournalCache{{CachePath: cachePath, HadPreviousCache: true}},
 	); err != nil {
@@ -2075,14 +2086,16 @@ func TestRefreshGravity_PostStateSaveCrashKeepsNewGeneration(t *testing.T) {
 
 	cachePath := cachePathForURL(dir, srv.URL)
 	backupPath := cachePath + ".bak"
-	if err := os.WriteFile(cachePath, []byte("new.example\n"), 0644); err != nil {
+	newContent := []byte("new.example\n")
+	newHash := fmt.Sprintf("%x", sha256.Sum256(newContent))
+	if err := os.WriteFile(cachePath, newContent, 0644); err != nil {
 		t.Fatalf("failed to seed live cache: %v", err)
 	}
 	if err := os.WriteFile(backupPath, []byte("old.example\n"), 0644); err != nil {
 		t.Fatalf("failed to seed backup cache: %v", err)
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
-		srv.URL: {ETag: "etag-new"},
+		srv.URL: {ETag: "etag-new", SHA256: newHash},
 	}); err != nil {
 		t.Fatalf("failed to save new state map: %v", err)
 	}
@@ -2113,7 +2126,9 @@ func TestRefreshGravity_PostStateSaveCrashWithUnchangedMetadataKeepsNewGeneratio
 
 	cachePath := cachePathForURL(dir, srv.URL)
 	backupPath := cachePath + ".bak"
-	if err := os.WriteFile(cachePath, []byte("new.example\n"), 0644); err != nil {
+	newContent2 := []byte("new.example\n")
+	newHash2 := fmt.Sprintf("%x", sha256.Sum256(newContent2))
+	if err := os.WriteFile(cachePath, newContent2, 0644); err != nil {
 		t.Fatalf("failed to seed live cache: %v", err)
 	}
 	if err := os.WriteFile(backupPath, []byte("old.example\n"), 0644); err != nil {
@@ -2121,16 +2136,16 @@ func TestRefreshGravity_PostStateSaveCrashWithUnchangedMetadataKeepsNewGeneratio
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
 		gravityStateMetaKey: {ETag: "commit-same"},
-		srv.URL:             {ETag: "etag-same"},
+		srv.URL:             {ETag: "etag-same", SHA256: newHash2},
 	}); err != nil {
 		t.Fatalf("failed to save state map: %v", err)
 	}
 	if err := saveGravityPublishJournal(
 		dir,
-		map[string]GravityState{srv.URL: {ETag: "etag-same"}},
+		map[string]GravityState{srv.URL: {ETag: "etag-same", SHA256: newHash2}},
 		map[string]GravityState{
 			gravityStateMetaKey: {ETag: "commit-same"},
-			srv.URL:             {ETag: "etag-same"},
+			srv.URL:             {ETag: "etag-same", SHA256: newHash2},
 		},
 		[]gravityJournalCache{{CachePath: cachePath, HadPreviousCache: true}},
 	); err != nil {
@@ -2331,8 +2346,15 @@ func TestRefreshGravity_ReopenFailureDoesNotLeakExceptions(t *testing.T) {
 	existingTrie := BuildTrieFromScanner(bufio.NewScanner(strings.NewReader("example.com\n")))
 	res.UpdateGravityData(existingTrie, nil)
 	cachePath := cachePathForURL(dir, srv.URL)
-	if err := os.WriteFile(cachePath, []byte("example.com\n"), 0644); err != nil {
+	cacheContent1 := []byte("example.com\n")
+	cacheHash1 := fmt.Sprintf("%x", sha256.Sum256(cacheContent1))
+	if err := os.WriteFile(cachePath, cacheContent1, 0644); err != nil {
 		t.Fatalf("failed to seed fallback cache: %v", err)
+	}
+	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
+		srv.URL: {SHA256: cacheHash1},
+	}); err != nil {
+		t.Fatalf("failed to save state map: %v", err)
 	}
 
 	oldCreateSiblingTempFile := createSiblingTempFileFunc
@@ -2366,11 +2388,13 @@ func TestRefreshGravity_TempFileFailureUsesSharedFallbackAndExceptions(t *testin
 	DefaultLists = []string{server.URL}
 
 	cachePath := cachePathForURL(dir, server.URL)
-	if err := os.WriteFile(cachePath, []byte("example.com\n"), 0644); err != nil {
+	cacheContent2 := []byte("example.com\n")
+	cacheHash2 := fmt.Sprintf("%x", sha256.Sum256(cacheContent2))
+	if err := os.WriteFile(cachePath, cacheContent2, 0644); err != nil {
 		t.Fatalf("failed to seed cache: %v", err)
 	}
 	if err := saveStateMap(filepath.Join(dir, "gravity.state.json"), map[string]GravityState{
-		server.URL: {Exceptions: []string{"ads.example.com"}},
+		server.URL: {Exceptions: []string{"ads.example.com"}, SHA256: cacheHash2},
 	}); err != nil {
 		t.Fatalf("failed to save state map: %v", err)
 	}

@@ -381,11 +381,9 @@ func (d *Daemon) sendServfail(conn *net.UDPConn, cliAddr *net.UDPAddr, raw []byt
 }
 
 func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) bool {
+	cacheParams := ExtractCacheParams(&msg, domain)
 	if len(msg.Questions) > 0 {
-		q := msg.Questions[0]
-		cd := msg.Header.CheckingDisabled
-		ad := msg.Header.AuthenticData
-		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type), uint16(q.Class), cd, ad); ok {
+		if cachedMsg, ok := d.dnsCache.Get(cacheParams); ok {
 			cp := *cachedMsg
 			cp.Header.ID = msg.Header.ID
 			resp, err := cp.Pack()
@@ -408,9 +406,7 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 
 	var respMsg dnsmessage.Message
 	if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
-		cd := msg.Header.CheckingDisabled
-		ad := msg.Header.AuthenticData
-		d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), cd, ad, &respMsg)
+		d.dnsCache.Set(cacheParams, &respMsg)
 	}
 	_, _ = conn.WriteToUDP(respRaw, cliAddr)
 	return true

@@ -34,8 +34,40 @@ func NewDNSCache(max int) *DNSCache {
 	}
 }
 
-func cacheKey(qname string, qtype, qclass uint16, cd, ad bool) string {
-	return fmt.Sprintf("%s|%d|%d|%t|%t", qname, qtype, qclass, cd, ad)
+type CacheQueryParams struct {
+	QName   string
+	QType   uint16
+	QClass  uint16
+	RD      bool
+	CD      bool
+	AD      bool
+	HasDO   bool
+	EDNSUDP uint16
+}
+
+func ExtractCacheParams(msg *dnsmessage.Message, domain string) CacheQueryParams {
+	p := CacheQueryParams{
+		QName: domain,
+	}
+	if len(msg.Questions) > 0 {
+		p.QType = uint16(msg.Questions[0].Type)
+		p.QClass = uint16(msg.Questions[0].Class)
+	}
+	p.RD = msg.Header.RecursionDesired
+	p.CD = msg.Header.CheckingDisabled
+	p.AD = msg.Header.AuthenticData
+	for _, add := range msg.Additionals {
+		if add.Header.Type == dnsmessage.TypeOPT {
+			p.EDNSUDP = uint16(add.Header.Class)
+			p.HasDO = (add.Header.TTL & 0x00008000) != 0
+			break
+		}
+	}
+	return p
+}
+
+func cacheKey(p CacheQueryParams) string {
+	return fmt.Sprintf("%s|%d|%d|%t|%t|%t|%t|%d", p.QName, p.QType, p.QClass, p.RD, p.CD, p.AD, p.HasDO, p.EDNSUDP)
 }
 
 func cloneResource(r dnsmessage.Resource) dnsmessage.Resource {
@@ -113,11 +145,11 @@ func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
 	return &msgCopy
 }
 
-func (c *DNSCache) Get(qname string, qtype, qclass uint16, cd, ad bool) (*dnsmessage.Message, bool) {
+func (c *DNSCache) Get(p CacheQueryParams) (*dnsmessage.Message, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype, qclass, cd, ad)
+	key := cacheKey(p)
 	elem, ok := c.entries[key]
 	if !ok {
 		return nil, false
@@ -157,7 +189,7 @@ func (c *DNSCache) Get(qname string, qtype, qclass uint16, cd, ad bool) (*dnsmes
 	return msgCopy, true
 }
 
-func (c *DNSCache) Set(qname string, qtype, qclass uint16, cd, ad bool, msg *dnsmessage.Message) {
+func (c *DNSCache) Set(p CacheQueryParams, msg *dnsmessage.Message) {
 	if len(msg.Answers) == 0 {
 		return
 	}
@@ -165,7 +197,7 @@ func (c *DNSCache) Set(qname string, qtype, qclass uint16, cd, ad bool, msg *dns
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	key := cacheKey(qname, qtype, qclass, cd, ad)
+	key := cacheKey(p)
 
 	var minTTL uint32 = math.MaxUint32
 	hasNonZeroTTL := false

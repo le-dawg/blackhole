@@ -260,23 +260,26 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 	if err != nil {
 		return false
 	}
-	cachedState := stateMap[url]
-	if cachedState.SHA256 != "" {
-		h := sha256.New()
-		if _, err := io.Copy(h, f); err != nil {
-			_ = f.Close()
-			return false
-		}
-		gotHash := hex.EncodeToString(h.Sum(nil))
-		if gotHash != cachedState.SHA256 {
-			log.Printf("Security alert: cache digest mismatch for %s (expected %s, got %s)", url, cachedState.SHA256, gotHash)
-			_ = f.Close()
-			return false
-		}
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			_ = f.Close()
-			return false
-		}
+	cachedState, hasState := stateMap[url]
+	if !hasState || cachedState.SHA256 == "" {
+		_ = f.Close()
+		return false
+	}
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		_ = f.Close()
+		return false
+	}
+	gotHash := hex.EncodeToString(h.Sum(nil))
+	if gotHash != cachedState.SHA256 {
+		log.Printf("Security alert: cache digest mismatch for %s (expected %s, got %s)", url, cachedState.SHA256, gotHash)
+		_ = f.Close()
+		return false
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		_ = f.Close()
+		return false
 	}
 
 	minRules := minRulesForURL(url)
@@ -425,7 +428,7 @@ func recoverGravityArtifacts(dir string, statePath string) error {
 					h := sha256.New()
 					_, _ = io.Copy(h, cf)
 					_ = cf.Close()
-					if st.SHA256 != "" && hex.EncodeToString(h.Sum(nil)) != st.SHA256 {
+					if st.SHA256 == "" || hex.EncodeToString(h.Sum(nil)) != st.SHA256 {
 						validNextCaches = false
 						break
 					}

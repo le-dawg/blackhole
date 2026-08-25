@@ -207,8 +207,21 @@ func TestValidateDNSResponse_CNAMEAndBailiwick(t *testing.T) {
 		t.Fatalf("expected valid OPT additionals to pass, got: %v", err)
 	}
 
-	// 6. Authorized MX Target in Additional section
-	mxResp := req
+	// 6. Authorized MX Target in Additional section for MX query
+	mxReq := dnsmessage.Message{
+		Header: dnsmessage.Header{
+			ID: 0x5555,
+		},
+		Questions: []dnsmessage.Question{
+			{
+				Name:  dnsmessage.MustNewName("target.example.com."),
+				Type:  dnsmessage.TypeMX,
+				Class: dnsmessage.ClassINET,
+			},
+		},
+	}
+	mxReqRaw, _ := mxReq.Pack()
+	mxResp := mxReq
 	mxResp.Header.Response = true
 	mxResp.Answers = []dnsmessage.Resource{
 		{
@@ -236,11 +249,30 @@ func TestValidateDNSResponse_CNAMEAndBailiwick(t *testing.T) {
 		},
 	}
 	mxRaw, _ := mxResp.Pack()
-	if err := validateDNSResponse(reqRaw, mxRaw); err != nil {
+	if err := validateDNSResponse(mxReqRaw, mxRaw); err != nil {
 		t.Fatalf("expected valid MX glue to pass, got: %v", err)
 	}
 
-	// 7. Conflicting CNAME owners should fail
+	// 7. Unexpected Answer Type (e.g. NS record in Answer for TypeA query)
+	unexpectedTypeResp := req
+	unexpectedTypeResp.Header.Response = true
+	unexpectedTypeResp.Answers = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("target.example.com."),
+				Type:  dnsmessage.TypeNS,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.NSResource{NS: dnsmessage.MustNewName("ns1.target.example.com.")},
+		},
+	}
+	unexpectedTypeRaw, _ := unexpectedTypeResp.Pack()
+	if err := validateDNSResponse(reqRaw, unexpectedTypeRaw); err == nil {
+		t.Fatalf("expected unexpected answer RR type to fail")
+	}
+
+	// 8. Conflicting CNAME owners should fail
 	cnameConflictResp := req
 	cnameConflictResp.Header.Response = true
 	cnameConflictResp.Answers = []dnsmessage.Resource{

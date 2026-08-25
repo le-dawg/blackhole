@@ -84,11 +84,20 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 	}
 
-	// Validate Answer records are on the CNAME graph path
+	// Validate Answer records match query class, expected type, and CNAME graph path
 	for _, ans := range resp.Answers {
+		if ans.Header.Class != q.Class {
+			return errors.New("answer class mismatch")
+		}
+		if ans.Header.Type != q.Type && ans.Header.Type != dnsmessage.TypeCNAME {
+			return errors.New("unexpected answer resource record type for query")
+		}
 		ansName := strings.ToLower(ans.Header.Name.String())
 		if !validNames[ansName] {
 			return errors.New("bailiwick mismatch: answer record not in query cname path")
+		}
+		if ans.Header.Type == q.Type && ansName != curr {
+			return errors.New("answer record owner does not match terminal cname target")
 		}
 	}
 
@@ -112,15 +121,24 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 	}
 
-	// Authorize MX, SRV, and NS targets from the Answer section
-	for _, ans := range resp.Answers {
-		switch b := ans.Body.(type) {
-		case *dnsmessage.MXResource:
-			validAdditionalNames[strings.ToLower(b.MX.String())] = true
-		case *dnsmessage.SRVResource:
-			validAdditionalNames[strings.ToLower(b.Target.String())] = true
-		case *dnsmessage.NSResource:
-			validAdditionalNames[strings.ToLower(b.NS.String())] = true
+	// Authorize MX, SRV, and NS targets from the Answer section only when matching the queried type
+	if q.Type == dnsmessage.TypeMX {
+		for _, ans := range resp.Answers {
+			if b, ok := ans.Body.(*dnsmessage.MXResource); ok {
+				validAdditionalNames[strings.ToLower(b.MX.String())] = true
+			}
+		}
+	} else if q.Type == dnsmessage.TypeSRV {
+		for _, ans := range resp.Answers {
+			if b, ok := ans.Body.(*dnsmessage.SRVResource); ok {
+				validAdditionalNames[strings.ToLower(b.Target.String())] = true
+			}
+		}
+	} else if q.Type == dnsmessage.TypeNS {
+		for _, ans := range resp.Answers {
+			if b, ok := ans.Body.(*dnsmessage.NSResource); ok {
+				validAdditionalNames[strings.ToLower(b.NS.String())] = true
+			}
 		}
 	}
 

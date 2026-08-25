@@ -23,6 +23,16 @@ static uint16_t get_socket_local_port(struct socket_fdinfo *sockInfo) {
 	return 0;
 }
 
+// Helper to get microsecond-accurate process start timestamp for PID reuse defense
+static uint64_t get_pid_start_time(pid_t pid) {
+	struct proc_bsdinfo bsdinfo;
+	int ret = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsdinfo, sizeof(bsdinfo));
+	if (ret <= 0) {
+		return 0;
+	}
+	return ((uint64_t)bsdinfo.pbi_start_tvsec * 1000000ULL) + (uint64_t)bsdinfo.pbi_start_tvusec;
+}
+
 // Helper to check if process arguments contain any of the patterns using KERN_PROCARGS2
 static int check_pid_patterns(pid_t pid, char** patterns, int pattern_count) {
 	int mib[3];
@@ -189,6 +199,11 @@ type portPIDEntry struct {
 	err       error
 }
 
+type pidIdentity struct {
+	pid       int
+	startTime uint64
+}
+
 type pidMetadataEntry struct {
 	metadata  ProcessMetadata
 	createdAt time.Time
@@ -197,7 +212,7 @@ type pidMetadataEntry struct {
 
 var (
 	portToPIDCache     atomic.Pointer[PortCache]
-	pidMetadataCache   = make(map[int]pidMetadataEntry)
+	pidMetadataCache   = make(map[pidIdentity]pidMetadataEntry)
 	pidMetadataCacheMu sync.RWMutex
 	metadataResolveMu  sync.Mutex
 
@@ -258,7 +273,7 @@ drainLoop:
 
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 	pidMetadataCacheMu.Lock()
-	pidMetadataCache = make(map[int]pidMetadataEntry)
+	pidMetadataCache = make(map[pidIdentity]pidMetadataEntry)
 	pidMetadataCacheMu.Unlock()
 
 	// 1. Process Janitor Loop
@@ -290,9 +305,9 @@ drainLoop:
 				portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
 				pidMetadataCacheMu.Lock()
-				for pid, entry := range pidMetadataCache {
+				for id, entry := range pidMetadataCache {
 					if now.Sub(entry.createdAt) >= 3*time.Second {
-						delete(pidMetadataCache, pid)
+						delete(pidMetadataCache, id)
 					}
 				}
 				pidMetadataCacheMu.Unlock()
@@ -407,8 +422,11 @@ func resolveMetadataForPID(pid int) (ProcessMetadata, error) {
 }
 
 func getMetadataForPID(pid int, patterns []string) (string, string, error) {
+	startTime := uint64(C.get_pid_start_time(C.pid_t(pid)))
+	id := pidIdentity{pid: pid, startTime: startTime}
+
 	pidMetadataCacheMu.RLock()
-	entry, found := pidMetadataCache[pid]
+	entry, found := pidMetadataCache[id]
 	pidMetadataCacheMu.RUnlock()
 
 	var meta ProcessMetadata
@@ -421,9 +439,12 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 		meta = entry.metadata
 	} else {
 		metadataResolveMu.Lock()
-		// Double check
+		// Double check under lock with freshly confirmed start time
+		startTime = uint64(C.get_pid_start_time(C.pid_t(pid)))
+		id = pidIdentity{pid: pid, startTime: startTime}
+
 		pidMetadataCacheMu.RLock()
-		entry, found = pidMetadataCache[pid]
+		entry, found = pidMetadataCache[id]
 		pidMetadataCacheMu.RUnlock()
 
 		if found && time.Since(entry.createdAt) < 2*time.Second {
@@ -435,7 +456,7 @@ func getMetadataForPID(pid int, patterns []string) (string, string, error) {
 		} else {
 			meta, err = resolveMetadataForPID(pid)
 			pidMetadataCacheMu.Lock()
-			pidMetadataCache[pid] = pidMetadataEntry{
+			pidMetadataCache[id] = pidMetadataEntry{
 				metadata:  meta,
 				createdAt: time.Now(),
 				err:       err,

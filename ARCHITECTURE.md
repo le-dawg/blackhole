@@ -28,8 +28,8 @@ Blackhole is a high-performance, low-latency, zero-allocation local DNS sinkhole
 |  |  1. Explicit User Blacklist (Always Wins, Sinkhole 0.0.0.0 / ::)  |  |
 |  |  2. Pause Service Verification (Temporary Global Bypass)          |  |
 |  |  3. App Exclusion Inspection (proc_pidpath / LOCAL_PEEREPID)     |  |
-|  |  4. Extension FilterChain (`Filter.Process`)                      |  |
-|  |  5. FilterEngine Radix Trie + Whitelist + Gravity Allowlist       |  |
+|  |  4. Core FilterEngine (User Whitelist -> Allowlist -> Radix Trie) |  |
+|  |  5. Extension FilterChain (`Filter.Process`)                      |  |
 |  +-------------------------------------------------------------------+  |
 |                                  |                                      |
 |            +---------------------+---------------------+                |
@@ -115,7 +115,7 @@ type Filter interface {
     Process(req []byte) (resp []byte, block bool, err error)
 }
 ```
-Global registration: `dnsd.RegisterFilter(f Filter)`. Custom filters are invoked concurrently across worker goroutines and must be re-entrant and thread-safe. If a filter returns an error, the daemon immediately emits SERVFAIL to the client and records the event in telemetry.
+Global registration: `dnsd.RegisterFilter(f Filter)`. In the resolution pipeline, the core `FilterEngine` (evaluating User Whitelist, Gravity Allowlist, and Radix Trie Blocklist) executes as the first element of `FilterChain`, followed by registered extension `Filter` instances. Custom filters are invoked concurrently across worker goroutines and must be re-entrant and thread-safe. If a filter returns an error, the daemon immediately emits SERVFAIL to the client and records the event in telemetry.
 
 ### `ListParser` & `RuleAwareListParser`
 ```go

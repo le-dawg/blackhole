@@ -158,7 +158,7 @@ func TestProcessCacheTTL(t *testing.T) {
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	pidMetadataCacheMu.Lock()
-	pidMetadataCache = make(map[int]pidMetadataEntry)
+	pidMetadataCache = make(map[pidIdentity]pidMetadataEntry)
 	pidMetadataCacheMu.Unlock()
 
 	// Dynamically allocate a free ephemeral port
@@ -182,8 +182,9 @@ func TestProcessCacheTTL(t *testing.T) {
 	newMappings[port] = pEntry0
 	portToPIDCache.Store(&PortCache{Mappings: newMappings})
 
+	targetID := pidIdentity{pid: 12345, startTime: 0}
 	pidMetadataCacheMu.Lock()
-	pidMetadataCache[12345] = pidMetadataEntry{
+	pidMetadataCache[targetID] = pidMetadataEntry{
 		metadata: ProcessMetadata{
 			Name:     "cached_proc",
 			BundleID: "cached_bundle",
@@ -212,9 +213,9 @@ func TestProcessCacheTTL(t *testing.T) {
 	portToPIDCache.Store(&PortCache{Mappings: newMappings2})
 
 	pidMetadataCacheMu.Lock()
-	mEntry := pidMetadataCache[12345]
+	mEntry := pidMetadataCache[targetID]
 	mEntry.createdAt = time.Now().Add(-65 * time.Second)
-	pidMetadataCache[12345] = mEntry
+	pidMetadataCache[targetID] = mEntry
 	pidMetadataCacheMu.Unlock()
 
 	// Verify that it no longer returns the cached values (since the port is inactive, it should return an error or Unknown)
@@ -439,4 +440,30 @@ func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 
 	// Restart so subsequent tests pass
 	go StartProcessMonitor(context.Background())
+}
+
+func TestProcessMonitor_PIDStartTimeReuseDefense(t *testing.T) {
+	pid := os.Getpid()
+	name1, bundle1, err1 := getMetadataForPID(pid, nil)
+	if err1 != nil || name1 == "Unknown" {
+		t.Fatalf("expected valid metadata for current process, got %q, %q, %v", name1, bundle1, err1)
+	}
+
+	// Verify that artificially modifying the start time creates a separate cache slot (defeating PID reuse)
+	fakeID := pidIdentity{pid: pid, startTime: 999999999}
+	pidMetadataCacheMu.Lock()
+	pidMetadataCache[fakeID] = pidMetadataEntry{
+		metadata: ProcessMetadata{
+			Name:     "/usr/bin/recycled_fake_process",
+			BundleID: "com.fake.recycled",
+		},
+		createdAt: time.Now(),
+	}
+	pidMetadataCacheMu.Unlock()
+
+	// Calling getMetadataForPID should still return true identity because kernel start time does not match fakeID
+	name2, bundle2, err2 := getMetadataForPID(pid, nil)
+	if err2 != nil || name2 != name1 || bundle2 != bundle1 {
+		t.Fatalf("expected true identity %q, got %q (bundle %q)", name1, name2, bundle2)
+	}
 }
