@@ -97,14 +97,18 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		validAdditionalNames[k] = true
 	}
 
-	// Validate Authority records are within zone bailiwick & collect authorized NS targets
+	// Validate Authority records are within zone bailiwick & collect authorized in-bailiwick NS targets
 	for _, auth := range resp.Authorities {
 		authName := strings.ToLower(auth.Header.Name.String())
 		if !isZoneBailiwick(qNameStr, authName) {
 			return errors.New("bailiwick mismatch: authority record out of zone")
 		}
 		if ns, ok := auth.Body.(*dnsmessage.NSResource); ok {
-			validAdditionalNames[strings.ToLower(ns.NS.String())] = true
+			nsTarget := strings.ToLower(ns.NS.String())
+			// RFC 1034 4.3.2: Glue records in Additional section are ONLY authorized for in-bailiwick name servers
+			if isZoneBailiwick(nsTarget, authName) {
+				validAdditionalNames[nsTarget] = true
+			}
 		}
 	}
 

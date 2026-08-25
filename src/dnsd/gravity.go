@@ -249,6 +249,12 @@ func openCacheForSource(dir, url string, index int) (*os.File, error) {
 	return os.Open(legacyCachePath)
 }
 
+var builtinProductionLists = []string{
+	"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts",
+	"https://small.oisd.nl/domainswild",
+	"https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt",
+}
+
 func loadCachedSource(dir, url string, index int, stateMap map[string]GravityState, readers *[]io.Reader, filesToClose *[]*os.File, gravityAllowlist map[string]bool) bool {
 	f, err := openCacheForSource(dir, url, index)
 	if err != nil {
@@ -273,11 +279,12 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 		}
 	}
 
-	minRules := 1
+	minRules := minRulesForURL(url)
 	if cachedState.RuleCount > 10 {
-		minRules = (cachedState.RuleCount + 1) / 2
-	} else if sourceRequiresMultipleRules(url, nil) {
-		minRules = 2
+		retainedFloor := (cachedState.RuleCount + 1) / 2
+		if retainedFloor > minRules {
+			minRules = retainedFloor
+		}
 	}
 	valid, err := cacheHasEffectiveRules(f, minRules)
 	if err != nil || !valid {
@@ -291,6 +298,23 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 		gravityAllowlist[domain] = true
 	}
 	return true
+}
+
+func minRulesForURL(rawURL string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 1
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "127.0.0.1" || host == "localhost" {
+		return 1
+	}
+	for _, def := range builtinProductionLists {
+		if rawURL == def {
+			return 100
+		}
+	}
+	return 2
 }
 
 func cacheHasEffectiveRules(f *os.File, minRequired int) (bool, error) {
@@ -319,24 +343,6 @@ func cacheHasEffectiveRules(f *os.File, minRequired int) (bool, error) {
 
 func gravityPublishJournalPath(dir string) string {
 	return filepath.Join(dir, "gravity.publish.json")
-}
-
-func piHoleSourceRequiresMultipleRules(rawURL string) bool {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return true
-	}
-	host := strings.ToLower(parsed.Hostname())
-	return host != "127.0.0.1" && host != "localhost"
-}
-
-func sourceRequiresMultipleRules(rawURL string, parser any) bool {
-	switch parser.(type) {
-	case *PiHoleParser, *BlocklistParser, PiHoleParser, BlocklistParser:
-		return piHoleSourceRequiresMultipleRules(rawURL)
-	default:
-		return piHoleSourceRequiresMultipleRules(rawURL)
-	}
 }
 
 func validateJournalCaches(dir string, caches []gravityJournalCache) error {
@@ -682,10 +688,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		if writeErr == nil && blockCount == 0 {
 			writeErr = fmt.Errorf("source produced no effective block rules")
 		}
-		minRequired := 1
-		if sourceRequiresMultipleRules(url, parser) {
-			minRequired = 2
-		}
+		minRequired := minRulesForURL(url)
 		if writeErr == nil && len(uniqueBlockDomains) < minRequired {
 			writeErr = fmt.Errorf("source produced insufficient effective block rules (%d < %d)", len(uniqueBlockDomains), minRequired)
 		}
