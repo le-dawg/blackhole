@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,14 +36,15 @@ func NewDNSCache(max int) *DNSCache {
 }
 
 type CacheQueryParams struct {
-	QName   string
-	QType   uint16
-	QClass  uint16
-	RD      bool
-	CD      bool
-	AD      bool
-	HasDO   bool
-	EDNSUDP uint16
+	QName       string
+	QType       uint16
+	QClass      uint16
+	RD          bool
+	CD          bool
+	AD          bool
+	HasDO       bool
+	EDNSUDP     uint16
+	EDNSOptions string
 }
 
 func ExtractCacheParams(msg *dnsmessage.Message, domain string) CacheQueryParams {
@@ -60,6 +62,13 @@ func ExtractCacheParams(msg *dnsmessage.Message, domain string) CacheQueryParams
 		if add.Header.Type == dnsmessage.TypeOPT {
 			p.EDNSUDP = uint16(add.Header.Class)
 			p.HasDO = (add.Header.TTL & 0x00008000) != 0
+			if opt, ok := add.Body.(*dnsmessage.OPTResource); ok && len(opt.Options) > 0 {
+				var optBuf strings.Builder
+				for _, o := range opt.Options {
+					fmt.Fprintf(&optBuf, "%d:%x;", o.Code, o.Data)
+				}
+				p.EDNSOptions = optBuf.String()
+			}
 			break
 		}
 	}
@@ -67,7 +76,7 @@ func ExtractCacheParams(msg *dnsmessage.Message, domain string) CacheQueryParams
 }
 
 func cacheKey(p CacheQueryParams) string {
-	return fmt.Sprintf("%s|%d|%d|%t|%t|%t|%t|%d", p.QName, p.QType, p.QClass, p.RD, p.CD, p.AD, p.HasDO, p.EDNSUDP)
+	return fmt.Sprintf("%s|%d|%d|%t|%t|%t|%t|%d|%s", p.QName, p.QType, p.QClass, p.RD, p.CD, p.AD, p.HasDO, p.EDNSUDP, p.EDNSOptions)
 }
 
 func cloneResource(r dnsmessage.Resource) dnsmessage.Resource {

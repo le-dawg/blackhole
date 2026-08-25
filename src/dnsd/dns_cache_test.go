@@ -111,3 +111,93 @@ func TestDNSCache_ZeroTTLNotCached(t *testing.T) {
 		t.Fatal("expected 0-TTL response NOT to be cached")
 	}
 }
+
+func TestDNSCache_EDNSOptionsIsolation(t *testing.T) {
+	cache := NewDNSCache(5)
+	msg := &dnsmessage.Message{
+		Header: dnsmessage.Header{
+			Response: true,
+		},
+		Answers: []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{
+					Name:  dnsmessage.MustNewName("options.example.com."),
+					Type:  dnsmessage.TypeA,
+					Class: dnsmessage.ClassINET,
+					TTL:   300,
+				},
+				Body: &dnsmessage.AResource{A: [4]byte{1, 2, 3, 4}},
+			},
+		},
+	}
+
+	req1 := &dnsmessage.Message{
+		Header: dnsmessage.Header{
+			RecursionDesired: true,
+		},
+		Questions: []dnsmessage.Question{
+			{
+				Name:  dnsmessage.MustNewName("options.example.com."),
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+			},
+		},
+		Additionals: []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{
+					Name:  dnsmessage.MustNewName("."),
+					Type:  dnsmessage.TypeOPT,
+					Class: 1232,
+				},
+				Body: &dnsmessage.OPTResource{
+					Options: []dnsmessage.Option{
+						{Code: 10, Data: []byte("cookie-1")},
+					},
+				},
+			},
+		},
+	}
+
+	req2 := &dnsmessage.Message{
+		Header: dnsmessage.Header{
+			RecursionDesired: true,
+		},
+		Questions: []dnsmessage.Question{
+			{
+				Name:  dnsmessage.MustNewName("options.example.com."),
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassINET,
+			},
+		},
+		Additionals: []dnsmessage.Resource{
+			{
+				Header: dnsmessage.ResourceHeader{
+					Name:  dnsmessage.MustNewName("."),
+					Type:  dnsmessage.TypeOPT,
+					Class: 1232,
+				},
+				Body: &dnsmessage.OPTResource{
+					Options: []dnsmessage.Option{
+						{Code: 10, Data: []byte("cookie-2")},
+					},
+				},
+			},
+		},
+	}
+
+	p1 := ExtractCacheParams(req1, "options.example.com.")
+	p2 := ExtractCacheParams(req2, "options.example.com.")
+
+	if p1.EDNSOptions == p2.EDNSOptions {
+		t.Fatalf("expected different EDNS options encoding")
+	}
+
+	cache.Set(p1, msg)
+
+	if _, hit := cache.Get(p1); !hit {
+		t.Fatal("expected cache hit for req1")
+	}
+	if _, hit := cache.Get(p2); hit {
+		t.Fatal("expected cache miss for req2 with different cookie option")
+	}
+}

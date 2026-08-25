@@ -142,10 +142,16 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		}
 	}
 
-	// Validate Additional records (except OPT) match CNAME path or authoritative targets
+	// Validate Additional records (except OPT) match query class, address glue types, and authorized targets
 	for _, add := range resp.Additionals {
 		if add.Header.Type == dnsmessage.TypeOPT {
 			continue // EDNS0 OPT record is allowed
+		}
+		if add.Header.Class != q.Class {
+			return errors.New("additional record class mismatch")
+		}
+		if add.Header.Type != dnsmessage.TypeA && add.Header.Type != dnsmessage.TypeAAAA {
+			return errors.New("untrusted additional resource record type")
 		}
 		addName := strings.ToLower(add.Header.Name.String())
 		if !validAdditionalNames[addName] {

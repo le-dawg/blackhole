@@ -299,4 +299,58 @@ func TestValidateDNSResponse_CNAMEAndBailiwick(t *testing.T) {
 	if err := validateDNSResponse(reqRaw, cnameConflictRaw); err == nil {
 		t.Fatalf("expected conflicting CNAME records to fail")
 	}
+
+	// 9. Untrusted Additional RR type (e.g. TXT record under authorized MX owner)
+	invalidAddTypeResp := mxResp
+	invalidAddTypeResp.Additionals = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("mail.target.example.com."),
+				Type:  dnsmessage.TypeTXT,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.TXTResource{TXT: []string{"malicious payload"}},
+		},
+	}
+	invalidAddTypeRaw, _ := invalidAddTypeResp.Pack()
+	if err := validateDNSResponse(mxReqRaw, invalidAddTypeRaw); err == nil {
+		t.Fatalf("expected non-address additional RR type to fail")
+	}
+
+	// 10. Untrusted Additional class mismatch
+	invalidAddClassResp := mxResp
+	invalidAddClassResp.Additionals = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("mail.target.example.com."),
+				Type:  dnsmessage.TypeA,
+				Class: dnsmessage.ClassCSNET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.AResource{A: [4]byte{192, 0, 2, 1}},
+		},
+	}
+	invalidAddClassRaw, _ := invalidAddClassResp.Pack()
+	if err := validateDNSResponse(mxReqRaw, invalidAddClassRaw); err == nil {
+		t.Fatalf("expected additional class mismatch to fail")
+	}
+
+	// 11. Valid AAAA glue under authorized MX owner
+	validAAAAResp := mxResp
+	validAAAAResp.Additionals = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("mail.target.example.com."),
+				Type:  dnsmessage.TypeAAAA,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.AAAAResource{AAAA: [16]byte{0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+		},
+	}
+	validAAAARaw, _ := validAAAAResp.Pack()
+	if err := validateDNSResponse(mxReqRaw, validAAAARaw); err != nil {
+		t.Fatalf("expected valid AAAA glue to pass, got: %v", err)
+	}
 }
