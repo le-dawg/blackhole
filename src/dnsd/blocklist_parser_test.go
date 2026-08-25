@@ -206,9 +206,9 @@ func (r *repeatedRuleReader) Read(p []byte) (int, error) {
 }
 
 type uniqueRuleReader struct {
-	current   int
-	total     int
-	pending   []byte
+	current    int
+	total      int
+	pending    []byte
 	linePrefix string
 	lineSuffix string
 }

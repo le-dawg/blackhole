@@ -28,7 +28,7 @@ func TestIPCServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
-	defer srv.Shutdown(context.Background())
+	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -137,7 +137,7 @@ func TestIPCServer_PauseEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
-	defer srv.Shutdown(context.Background())
+	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -197,7 +197,7 @@ func TestIPCServer_PeerCredRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start server: %v", err)
 	}
-	defer srv.Shutdown(context.Background())
+	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -250,7 +250,7 @@ func TestIPCServer_QueriesEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
-	defer srv.Shutdown(context.Background())
+	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -336,7 +336,7 @@ func TestIPCServer_PauseOverlappingGenerationRace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to start: %v", err)
 	}
-	defer srv.Shutdown(context.Background())
+	defer func() { _ = srv.Shutdown(context.Background()) }()
 
 	client := &http.Client{
 		Transport: &http.Transport{

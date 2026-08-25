@@ -1,9 +1,9 @@
 package dnsd
 
 import (
-	"strings"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,8 +24,8 @@ func TestUserListWatcher(t *testing.T) {
 	wlPath := filepath.Join(dir, "whitelist.txt")
 	blPath := filepath.Join(dir, "blacklist.txt")
 
-	os.WriteFile(wlPath, []byte("good.com\n"), 0644)
-	os.WriteFile(blPath, []byte("bad.com\n"), 0644)
+	_ = os.WriteFile(wlPath, []byte("good.com\n"), 0644)
+	_ = os.WriteFile(blPath, []byte("bad.com\n"), 0644)
 
 	res := NewFilterEngine(nil)
 	watcher, err := StartUserListWatcher(dir, res)
@@ -39,7 +39,7 @@ func TestUserListWatcher(t *testing.T) {
 	}, "initial list loading failed")
 
 	// Test hot reload
-	os.WriteFile(wlPath, []byte("good.com\nnewgood.com\n"), 0644)
+	_ = os.WriteFile(wlPath, []byte("good.com\nnewgood.com\n"), 0644)
 
 	assertEventually(t, func() bool {
 		return !res.Resolve("newgood.com")

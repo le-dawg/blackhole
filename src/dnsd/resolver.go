@@ -3,9 +3,10 @@ package dnsd
 import (
 	"bufio"
 	"strings"
-	"golang.org/x/net/dns/dnsmessage"
 	"sync"
 	"sync/atomic"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 type trieNode struct {
@@ -43,12 +44,12 @@ func NewFilterEngine(upstreams []string) *FilterEngine {
 	e := &FilterEngine{
 		upstreams: upstreams,
 	}
-		e.state.Store(&engineState{
-			root:             &trieNode{},
-			whitelist:        make(map[string]bool),
-			blacklist:        make(map[string]bool),
-			gravityAllowlist: make(map[string]bool),
-		})
+	e.state.Store(&engineState{
+		root:             &trieNode{},
+		whitelist:        make(map[string]bool),
+		blacklist:        make(map[string]bool),
+		gravityAllowlist: make(map[string]bool),
+	})
 	return e
 }
 
@@ -109,7 +110,7 @@ func normalizeDomain(domain string) string {
 // It returns the new root node.
 func BuildTrieFromScanner(scanner *bufio.Scanner) *trieNode {
 	newRoot := &trieNode{}
-	
+
 	for scanner.Scan() {
 		domain := normalizeDomain(scanner.Text())
 		if domain == "" {
@@ -190,6 +191,15 @@ func (e *FilterEngine) SetLists(whitelist, blacklist map[string]bool) {
 }
 
 // Resolve checks if a domain is blocked.
+func (e *FilterEngine) IsBlacklisted(domain string) bool {
+	domain = normalizeDomain(domain)
+	if domain == "" {
+		return false
+	}
+	state := e.state.Load().(*engineState)
+	return state.blacklist != nil && state.blacklist[domain]
+}
+
 func (e *FilterEngine) Resolve(domain string) bool {
 	domain = normalizeDomain(domain)
 	if domain == "" {
@@ -331,23 +341,23 @@ func (e *FilterEngine) Process(req []byte) (resp []byte, block bool, err error) 
 			case dnsmessage.TypeA:
 				msg.Answers = append(msg.Answers, dnsmessage.Resource{
 					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 3600},
-					Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+					Body:   &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
 				})
 			case dnsmessage.TypeAAAA:
 				msg.Answers = append(msg.Answers, dnsmessage.Resource{
 					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 3600},
-					Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+					Body:   &dnsmessage.AAAAResource{AAAA: [16]byte{}},
 				})
 			case dnsmessage.Type(65), dnsmessage.Type(64):
 				// HTTPS, SVCB (left empty in sendBlockedResponse)
 			case dnsmessage.TypeALL:
 				msg.Answers = append(msg.Answers, dnsmessage.Resource{
 					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 3600},
-					Body: &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
+					Body:   &dnsmessage.AResource{A: [4]byte{0, 0, 0, 0}},
 				})
 				msg.Answers = append(msg.Answers, dnsmessage.Resource{
 					Header: dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeAAAA, Class: dnsmessage.ClassINET, TTL: 3600},
-					Body: &dnsmessage.AAAAResource{AAAA: [16]byte{}},
+					Body:   &dnsmessage.AAAAResource{AAAA: [16]byte{}},
 				})
 			}
 		}

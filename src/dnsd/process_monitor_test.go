@@ -314,7 +314,7 @@ func TestProcessCacheBulkPopulate(t *testing.T) {
 	portToPIDCache.Store(&PortCache{Mappings: make(map[uint16]portPIDEntry)})
 
 	// Query port 1. This should run a system scan and populate both port 1 and port 2.
-	_, _, err = GetProcessInfoForPort(port1, []string{"litellm"})
+	_, _, _ = GetProcessInfoForPort(port1, []string{"litellm"})
 	WaitForScan()
 	_, _, err = GetProcessInfoForPort(port1, []string{"litellm"})
 	if err != nil {
@@ -369,22 +369,23 @@ func TestExtractBundleIDNestedAndCaseInsensitive(t *testing.T) {
 	}
 }
 
-
 func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 	// Start with context 1
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	go StartProcessMonitor(ctx1)
-	
+
 	// Let workers start
 	time.Sleep(50 * time.Millisecond)
-	
+
 	if count := ActiveWorkersCount(); count != 2 {
 		t.Fatalf("Expected 2 active workers, got %d", count)
 	}
-	
+
 	// Create some artificial load by firing queries that trigger scanTasks
 	for i := 0; i < 50; i++ {
-		go GetProcessInfoForPort(uint16(10000+i), []string{"dummy"})
+		go func(p uint16) {
+			_, _, _ = GetProcessInfoForPort(p, []string{"dummy"})
+		}(uint16(10000 + i))
 	}
 
 	// Wait briefly to allow processing
@@ -392,17 +393,17 @@ func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 
 	// Start with context 2, which should wait for ctx1 workers to cleanly shut down
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	
+
 	monitorDone := make(chan struct{})
 	go func() {
 		StartProcessMonitor(ctx2)
-		
+
 		// Context 1 should have been cancelled by the new StartProcessMonitor call,
 		// and new workers launched. Let's verify zero accumulation.
 		if count := ActiveWorkersCount(); count != 2 {
 			t.Errorf("Expected 2 active workers after restart, got %d", count)
 		}
-		
+
 		close(monitorDone)
 	}()
 
@@ -410,12 +411,14 @@ func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 
 	// Create some load for ctx2
 	for i := 0; i < 50; i++ {
-		go GetProcessInfoForPort(uint16(20000+i), []string{"dummy"})
+		go func(p uint16) {
+			_, _, _ = GetProcessInfoForPort(p, []string{"dummy"})
+		}(uint16(20000 + i))
 	}
 
 	cancel1() // cancel1 should be a no-op as it was cancelled inside StartProcessMonitor
 	cancel2()
-	
+
 	// Explicit teardown
 	processMonitorMu.Lock()
 	if processMonitorCancel != nil {
@@ -423,7 +426,7 @@ func TestStartProcessMonitor_RestartAndCancellation(t *testing.T) {
 	}
 	processMonitorWg.Wait()
 	processMonitorMu.Unlock()
-	
+
 	if count := ActiveWorkersCount(); count != 0 {
 		t.Fatalf("Expected 0 active workers after cancellation and wait, got %d", count)
 	}

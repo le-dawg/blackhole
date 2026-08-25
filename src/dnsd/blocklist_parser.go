@@ -308,7 +308,7 @@ func (p *PiHoleParser) Parse(r io.Reader, onDomain func(string)) error {
 
 		line = strings.ToLower(line)
 		line = strings.TrimSuffix(line, ".")
-		
+
 		if line != "" && line != "0.0.0.0" && line != "127.0.0.1" {
 			onDomain(line)
 		}

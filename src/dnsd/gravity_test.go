@@ -22,7 +22,7 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestGravitySync(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 ads.test.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 ads.test.com\n"))
 	}))
 	defer server.Close()
 
@@ -47,7 +47,7 @@ func TestGravitySync(t *testing.T) {
 
 func TestRefreshGravity_CreatesMissingDataDir(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 ads.test.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 ads.test.com\n"))
 	}))
 	defer server.Close()
 
@@ -121,7 +121,7 @@ func TestUpdate_Mixed200And304(t *testing.T) {
 	srv200 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", "new-etag")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("0.0.0.0 domain200.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 domain200.com\n"))
 	}))
 	defer srv200.Close()
 
@@ -176,7 +176,7 @@ func (m *mockParser) Parse(r io.Reader, onDomain func(string)) error {
 
 func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("dummy data"))
+		_, _ = w.Write([]byte("dummy data"))
 	}))
 	defer server.Close()
 
@@ -204,7 +204,7 @@ func TestRegisterParserForURL_CustomParserExecution(t *testing.T) {
 // 4. Test longest-prefix match precedence for custom parsers
 func TestRegisterParserForURL_LongestPrefixMatch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("dummy data"))
+		_, _ = w.Write([]byte("dummy data"))
 	}))
 	defer server.Close()
 
@@ -248,7 +248,7 @@ func TestStartGravitySync_Lifecycle(t *testing.T) {
 
 	// Test case 2: valid lists sync correctly
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 ads.test.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 ads.test.com\n"))
 	}))
 	defer server.Close()
 
@@ -297,7 +297,7 @@ func (b *badParser) Parse(r io.Reader, onDomain func(string)) error {
 func TestRefreshGravity_ScannerErrorDoesNotCorruptTrie(t *testing.T) {
 	dir := t.TempDir()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("dummy data"))
+		_, _ = w.Write([]byte("dummy data"))
 	}))
 	defer server.Close()
 
@@ -335,12 +335,12 @@ func TestRefreshGravity_ScannerErrorDoesNotCorruptTrie(t *testing.T) {
 
 func TestRefreshGravity_PartialSourceFailurePreservesExistingTrie(t *testing.T) {
 	s1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 bad1.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 bad1.com\n"))
 	}))
 	defer s1.Close()
 
 	s2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 bad2.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 bad2.com\n"))
 	}))
 	defer s2.Close()
 
@@ -371,7 +371,7 @@ func TestRefreshGravity_PartialSourceFailurePreservesExistingTrie(t *testing.T) 
 
 func TestRefreshGravity_DoesNotFollowTempCacheSymlink(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 ads.test.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 ads.test.com\n"))
 	}))
 	defer server.Close()
 
@@ -403,7 +403,7 @@ func TestRefreshGravity_DoesNotFollowTempCacheSymlink(t *testing.T) {
 
 func TestRefreshGravity_AdGuardExceptionSubtractsBlock(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("||data.notify.macys.com^\n@@||data.notify.macys.com^|\n||keepblocked.example^\n"))
+		_, _ = w.Write([]byte("||data.notify.macys.com^\n@@||data.notify.macys.com^|\n||keepblocked.example^\n"))
 	}))
 	defer server.Close()
 
@@ -426,7 +426,7 @@ func TestRefreshGravity_AdGuardExceptionSubtractsBlock(t *testing.T) {
 
 func TestRefreshGravity_ExceptionOnlySourceFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("@@||ads.example.com^\n"))
+		_, _ = w.Write([]byte("@@||ads.example.com^\n"))
 	}))
 	defer srv.Close()
 
@@ -482,7 +482,7 @@ func TestRefreshGravity_CacheIdentityFollowsSourceURL(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "srv1-etag")
-			w.Write([]byte("0.0.0.0 domain1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 domain1.example\n"))
 		default:
 			t.Fatalf("srv1 should not be requested in mode %s", requestMode)
 		}
@@ -493,7 +493,7 @@ func TestRefreshGravity_CacheIdentityFollowsSourceURL(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "srv2-etag")
-			w.Write([]byte("0.0.0.0 domain2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 domain2.example\n"))
 		case "reordered":
 			if got := r.Header.Get("If-None-Match"); got != "srv2-etag" {
 				t.Fatalf("expected srv2 ETag on reordered fetch, got %q", got)
@@ -669,7 +669,7 @@ func TestRefreshGravity_PersistsExceptionsAcrossNotModified(t *testing.T) {
 		requestCount++
 		if requestCount == 1 {
 			w.Header().Set("ETag", "etag-1")
-			w.Write([]byte("||example.com^\n@@||ads.example.com^\n"))
+			_, _ = w.Write([]byte("||example.com^\n@@||ads.example.com^\n"))
 			return
 		}
 		if got := r.Header.Get("If-None-Match"); got != "etag-1" {
@@ -712,7 +712,7 @@ func (p *exceptionLeakParser) ParseRules(r io.Reader, onBlock func(string), onEx
 
 func TestRefreshGravity_FailedParseDoesNotLeakNewExceptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 example.com\n"))
+		_, _ = w.Write([]byte("0.0.0.0 example.com\n"))
 	}))
 	defer srv.Close()
 
@@ -739,7 +739,7 @@ func TestRefreshGravity_FailedParseDoesNotLeakNewExceptions(t *testing.T) {
 func TestRefreshGravity_EmptySuccessfulSourcePreservesExistingTrie(t *testing.T) {
 	responseBody := "0.0.0.0 keep.example\n"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(responseBody))
+		_, _ = w.Write([]byte(responseBody))
 	}))
 	defer srv.Close()
 
@@ -769,7 +769,7 @@ func TestRefreshGravity_FailedParseDoesNotPoisonSubsequent304Replay(t *testing.T
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-keep")
-			w.Write([]byte("0.0.0.0 keep.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 keep.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-keep" {
 				t.Fatalf("expected etag-keep, got %q", got)
@@ -934,7 +934,7 @@ func (p *whitespaceParser) Parse(r io.Reader, onDomain func(string)) error {
 
 func TestRefreshGravity_WhitespaceOnlyParserOutputFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("irrelevant"))
+		_, _ = w.Write([]byte("irrelevant"))
 	}))
 	defer srv.Close()
 
@@ -950,7 +950,7 @@ func TestRefreshGravity_WhitespaceOnlyParserOutputFailsClosed(t *testing.T) {
 
 func TestRefreshGravity_GarbageSourceOutputFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("<html>temporary error</html>\n"))
+		_, _ = w.Write([]byte("<html>temporary error</html>\n"))
 	}))
 	defer srv.Close()
 
@@ -972,7 +972,7 @@ func TestRefreshGravity_GarbageSourceOutputFailsClosed(t *testing.T) {
 
 func TestRefreshGravity_PlainTextErrorBodyFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("temporary error\n"))
+		_, _ = w.Write([]byte("temporary error\n"))
 	}))
 	defer srv.Close()
 
@@ -997,7 +997,7 @@ func TestRefreshGravity_PlainTextErrorBodyFailsClosed(t *testing.T) {
 
 func TestRefreshGravity_PlainTextBodyWithOneDottedTokenFailsClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("temporary outage status.example.com\n"))
+		_, _ = w.Write([]byte("temporary outage status.example.com\n"))
 	}))
 	defer srv.Close()
 
@@ -1127,7 +1127,7 @@ func TestRefreshGravity_DuplicateRemotePiHoleRulesFailClosed(t *testing.T) {
 
 func TestRefreshGravity_SingleRuleLocalPiHoleSourceSucceeds(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("single.example.com\n"))
+		_, _ = w.Write([]byte("single.example.com\n"))
 	}))
 	defer srv.Close()
 
@@ -1146,7 +1146,7 @@ func TestRefreshGravity_SingleRuleLocalPiHoleSourceSucceeds(t *testing.T) {
 
 func TestRefreshGravity_TwoRulePiHoleSourceStillSucceeds(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("one.example.com\ntwo.example.com\n"))
+		_, _ = w.Write([]byte("one.example.com\ntwo.example.com\n"))
 	}))
 	defer srv.Close()
 
@@ -1169,10 +1169,10 @@ func TestRefreshGravity_StateSaveFailureDoesNotPoisonLaterReplay(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 keep.example\n0.0.0.0 keep2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 keep.example\n0.0.0.0 keep2.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n0.0.0.0 new2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n0.0.0.0 new2.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-old" {
 				t.Fatalf("expected old etag to survive failed publish, got %q", got)
@@ -1223,10 +1223,10 @@ func TestRefreshGravity_PostWriteStateSaveFailureKeepsNewState(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 keep.example\n0.0.0.0 keep2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 keep.example\n0.0.0.0 keep2.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n0.0.0.0 new2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n0.0.0.0 new2.example\n"))
 		default:
 			t.Fatalf("unexpected request mode %s", requestMode)
 		}
@@ -1275,10 +1275,10 @@ func TestRefreshGravity_LaterCachePublishFailureRollsBackEarlierSources(t *testi
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-1-old")
-			w.Write([]byte("0.0.0.0 old1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old1.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-1-new")
-			w.Write([]byte("0.0.0.0 new1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new1.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-1-old" {
 				t.Fatalf("expected old etag for source 1 after rollback, got %q", got)
@@ -1294,10 +1294,10 @@ func TestRefreshGravity_LaterCachePublishFailureRollsBackEarlierSources(t *testi
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-2-old")
-			w.Write([]byte("0.0.0.0 old2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old2.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-2-new")
-			w.Write([]byte("0.0.0.0 new2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new2.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-2-old" {
 				t.Fatalf("expected old etag for source 2 after rollback, got %q", got)
@@ -1356,10 +1356,10 @@ func TestRefreshGravity_LaterBackupFailureRollsBackEarlierSources(t *testing.T) 
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-1-old")
-			w.Write([]byte("0.0.0.0 old1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old1.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-1-new")
-			w.Write([]byte("0.0.0.0 new1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new1.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-1-old" {
 				t.Fatalf("expected old etag for source 1 after rollback, got %q", got)
@@ -1375,10 +1375,10 @@ func TestRefreshGravity_LaterBackupFailureRollsBackEarlierSources(t *testing.T) 
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-2-old")
-			w.Write([]byte("0.0.0.0 old2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old2.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-2-new")
-			w.Write([]byte("0.0.0.0 new2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new2.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-2-old" {
 				t.Fatalf("expected old etag for source 2 after rollback, got %q", got)
@@ -1490,10 +1490,10 @@ func TestRefreshGravity_PreInstallCrashJournalRestoresOldGeneration(t *testing.T
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-old" {
 				t.Fatalf("expected old etag after pre-install crash recovery, got %q", got)
@@ -1544,10 +1544,10 @@ func TestRefreshGravity_PreInstallCrashWithUnchangedMetadataRollsBackOldGenerati
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-same" {
 				t.Fatalf("expected unchanged etag after rollback, got %q", got)
@@ -1598,10 +1598,10 @@ func TestRefreshGravity_RealPublishJournalRestoresOldGeneration(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-old" {
 				t.Fatalf("expected old etag after journaled pre-install crash, got %q", got)
@@ -1652,10 +1652,10 @@ func TestRefreshGravity_JournalStoresNextStateBeforePublish(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		default:
 			t.Fatalf("unexpected request mode %s", requestMode)
 		}
@@ -1966,10 +1966,10 @@ func TestRefreshGravity_JournalRemovalFailureKeepsNewGeneration(t *testing.T) {
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-new" {
 				t.Fatalf("expected new etag after journal-removal failure, got %q", got)
@@ -2020,10 +2020,10 @@ func TestRefreshGravity_PostCommitCleanupFailureKeepsNewTrieActive(t *testing.T)
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-old")
-			w.Write([]byte("0.0.0.0 old.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-new")
-			w.Write([]byte("0.0.0.0 new.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new.example\n"))
 		default:
 			t.Fatalf("unexpected request mode %s", requestMode)
 		}
@@ -2155,10 +2155,10 @@ func TestRefreshGravity_MultiSourcePreInstallCrashWithUnchangedMetadataRollsBack
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 old1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old1.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 new1.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new1.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-same" {
 				t.Fatalf("expected unchanged etag for source 1, got %q", got)
@@ -2174,10 +2174,10 @@ func TestRefreshGravity_MultiSourcePreInstallCrashWithUnchangedMetadataRollsBack
 		switch requestMode {
 		case "initial":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 old2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 old2.example\n"))
 		case "update":
 			w.Header().Set("ETag", "etag-same")
-			w.Write([]byte("0.0.0.0 new2.example\n"))
+			_, _ = w.Write([]byte("0.0.0.0 new2.example\n"))
 		case "304":
 			if got := r.Header.Get("If-None-Match"); got != "etag-same" {
 				t.Fatalf("expected unchanged etag for source 2, got %q", got)
@@ -2228,7 +2228,7 @@ func TestRefreshGravity_MultiSourcePreInstallCrashWithUnchangedMetadataRollsBack
 
 func TestRefreshGravity_ReclaimsStaleTempArtifacts(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("0.0.0.0 keep.example\n"))
+		_, _ = w.Write([]byte("0.0.0.0 keep.example\n"))
 	}))
 	defer srv.Close()
 
@@ -2319,7 +2319,7 @@ func TestRefreshGravity_NoSourcesFailsClosed(t *testing.T) {
 
 func TestRefreshGravity_ReopenFailureDoesNotLeakExceptions(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("||example.com^\n@@||ads.example.com^\n"))
+		_, _ = w.Write([]byte("||example.com^\n@@||ads.example.com^\n"))
 	}))
 	defer srv.Close()
 
@@ -2358,7 +2358,7 @@ func TestRefreshGravity_ReopenFailureDoesNotLeakExceptions(t *testing.T) {
 
 func TestRefreshGravity_TempFileFailureUsesSharedFallbackAndExceptions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("example.com\n"))
+		_, _ = w.Write([]byte("example.com\n"))
 	}))
 	defer server.Close()
 
@@ -2397,7 +2397,7 @@ func TestRefreshGravity_TempFileFailureUsesSharedFallbackAndExceptions(t *testin
 
 func TestRefreshGravity_StatErrorAbortsPublish(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("bad1.com\nbad2.com\n"))
+		_, _ = w.Write([]byte("bad1.com\nbad2.com\n"))
 	}))
 	defer server.Close()
 
@@ -2423,4 +2423,3 @@ func TestRefreshGravity_StatErrorAbortsPublish(t *testing.T) {
 		t.Fatalf("expected stat error message, got: %v", err)
 	}
 }
-

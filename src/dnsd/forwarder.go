@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,44 +42,79 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		return errors.New("qname/qtype/qclass mismatch")
 	}
 
-	if len(resp.Answers) > 100 || len(resp.Authorities) > 100 || len(resp.Additionals) > 100 {
+	if len(resp.Answers)+len(resp.Authorities)+len(resp.Additionals) > 100 {
 		return errors.New("excessive resource records")
 	}
 
-	qNameStr := q.Name.String()
-	
-	// Pass 1: Build the CNAME chain with maximum 8 hops
+	qNameStr := strings.ToLower(q.Name.String())
+
+	// Build exact CNAME graph traversal from qNameStr
 	validNames := make(map[string]bool)
 	validNames[qNameStr] = true
 
-	hops := 0
-	changed := true
-	for changed && hops < 8 {
-		changed = false
-		hops++
-		for _, ans := range resp.Answers {
-			ansName := ans.Header.Name.String()
-			if validNames[ansName] {
-				if cname, ok := ans.Body.(*dnsmessage.CNAMEResource); ok {
-					target := cname.CNAME.String()
-					if !validNames[target] {
-						validNames[target] = true
-						changed = true
-					}
-				}
-			}
+	cnameMap := make(map[string]string)
+	for _, ans := range resp.Answers {
+		if cname, ok := ans.Body.(*dnsmessage.CNAMEResource); ok {
+			cnameMap[strings.ToLower(ans.Header.Name.String())] = strings.ToLower(cname.CNAME.String())
 		}
 	}
 
-	// Pass 2: Strict validation that all answers are in the valid names map
+	curr := qNameStr
+	visited := make(map[string]bool)
+	for hop := 0; hop < 8; hop++ {
+		visited[curr] = true
+		next, hasNext := cnameMap[curr]
+		if !hasNext {
+			break
+		}
+		if visited[next] {
+			return errors.New("cname loop detected")
+		}
+		validNames[next] = true
+		curr = next
+	}
+
+	// Validate Answer records are on the CNAME graph path
 	for _, ans := range resp.Answers {
-		ansName := ans.Header.Name.String()
+		ansName := strings.ToLower(ans.Header.Name.String())
 		if !validNames[ansName] {
-			return errors.New("bailiwick mismatch")
+			return errors.New("bailiwick mismatch: answer record not in query cname path")
+		}
+	}
+
+	// Validate Authority records are within zone bailiwick
+	authorityNS := make(map[string]bool)
+	for _, auth := range resp.Authorities {
+		authName := strings.ToLower(auth.Header.Name.String())
+		if !isZoneBailiwick(qNameStr, authName) {
+			return errors.New("bailiwick mismatch: authority record out of zone")
+		}
+		if ns, ok := auth.Body.(*dnsmessage.NSResource); ok {
+			authorityNS[strings.ToLower(ns.NS.String())] = true
+		}
+	}
+
+	// Validate Additional records (except OPT) match CNAME path or authoritative NS glue
+	for _, add := range resp.Additionals {
+		if add.Header.Type == dnsmessage.TypeOPT {
+			continue // EDNS0 OPT record is allowed
+		}
+		addName := strings.ToLower(add.Header.Name.String())
+		if !validNames[addName] && !authorityNS[addName] {
+			return errors.New("bailiwick mismatch: untrusted additional record")
 		}
 	}
 
 	return nil
+}
+
+func isZoneBailiwick(qname, zone string) bool {
+	qname = strings.TrimSuffix(strings.ToLower(qname), ".")
+	zone = strings.TrimSuffix(strings.ToLower(zone), ".")
+	if qname == zone {
+		return true
+	}
+	return strings.HasSuffix(qname, "."+zone)
 }
 
 func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialContext func(ctx context.Context, network, addr string) (net.Conn, error)) ([]byte, error) {
@@ -107,7 +143,7 @@ func RaceForward(rawMsg []byte, upstreams []string, timeout time.Duration, dialC
 
 			// Set the deadline to match the context timeout
 			if deadline, ok := ctx.Deadline(); ok {
-				conn.SetDeadline(deadline)
+				_ = conn.SetDeadline(deadline)
 			}
 
 			if _, err := conn.Write(rawMsg); err != nil {
@@ -173,7 +209,7 @@ func RegisterFilter(f Filter) {
 func GetFilters() FilterChain {
 	filtersMu.RLock()
 	defer filtersMu.RUnlock()
-	
+
 	chain := make(FilterChain, len(globalFilters))
 	copy(chain, globalFilters)
 	return chain

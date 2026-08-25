@@ -67,12 +67,18 @@ func StartExclusionWatcher(path string) (*ExclusionManager, error) {
 				// Filter events for our specific file
 				if filepath.Clean(event.Name) == filepath.Clean(em.path) {
 					em.timerMu.Lock()
-					if em.debounceTimer != nil {
-						em.debounceTimer.Stop()
+					select {
+					case <-em.closeChan:
+						em.timerMu.Unlock()
+						return
+					default:
+						if em.debounceTimer != nil {
+							em.debounceTimer.Stop()
+						}
+						em.debounceTimer = time.AfterFunc(50*time.Millisecond, func() {
+							em.reload()
+						})
 					}
-					em.debounceTimer = time.AfterFunc(50*time.Millisecond, func() {
-						em.reload()
-					})
 					em.timerMu.Unlock()
 				}
 			case err, ok := <-watcher.Errors:

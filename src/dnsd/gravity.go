@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -34,7 +34,7 @@ var legacyDefaultLists = []string{
 }
 
 const (
-	gravityStateMetaKey = "__blackhole_meta__"
+	gravityStateMetaKey       = "__blackhole_meta__"
 	maxBlocklistResponseBytes = 64 * 1024 * 1024
 )
 
@@ -43,6 +43,20 @@ type GravityState struct {
 	LastModified string   `json:"last_modified"`
 	Exceptions   []string `json:"exceptions,omitempty"`
 	RuleCount    int      `json:"rule_count,omitempty"`
+	SHA256       string   `json:"sha256,omitempty"`
+}
+
+func computeFileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 type boundedReader struct {
@@ -88,11 +102,11 @@ var statFileFunc = os.Stat
 
 var (
 	parserMu   sync.RWMutex
-	parsersMap = make(map[string]ListParser)
+	parsersMap = make(map[string]any)
 )
 
-// RegisterParserForURL allows users to inject a custom parser implementation for a specific URL prefix.
-func RegisterParserForURL(urlPrefix string, p ListParser) {
+// RegisterParserForURL allows users to inject a custom parser implementation (ListParser or RuleAwareListParser) for a specific URL prefix.
+func RegisterParserForURL(urlPrefix string, p any) {
 	if p != nil {
 		parserMu.Lock()
 		parsersMap[urlPrefix] = p
@@ -145,24 +159,24 @@ func writeJSONFile(path string, value any) error {
 	if err := json.NewEncoder(f).Encode(value); err != nil {
 		log.Printf("Failed to encode state map: %v", err)
 		f.Close()
-		removeFileFunc(tempPath)
+		_ = removeFileFunc(tempPath)
 		return err
 	}
 	if err := syncFileFunc(f); err != nil {
 		f.Close()
-		removeFileFunc(tempPath)
+		_ = removeFileFunc(tempPath)
 		return err
 	}
 
 	if err := f.Close(); err != nil {
 		log.Printf("Failed to close temp state map file: %v", err)
-		removeFileFunc(tempPath)
+		_ = removeFileFunc(tempPath)
 		return err
 	}
 
 	if err := renameFileFunc(tempPath, path); err != nil {
 		log.Printf("Failed to rename temp state map to final path: %v", err)
-		removeFileFunc(tempPath)
+		_ = removeFileFunc(tempPath)
 		return err
 	}
 	if err := syncDirFunc(filepath.Dir(path)); err != nil {
@@ -231,9 +245,27 @@ func loadCachedSource(dir, url string, index int, stateMap map[string]GravitySta
 		return false
 	}
 	cachedState := stateMap[url]
+	if cachedState.SHA256 != "" {
+		h := sha256.New()
+		if _, err := io.Copy(h, f); err != nil {
+			_ = f.Close()
+			return false
+		}
+		gotHash := hex.EncodeToString(h.Sum(nil))
+		if gotHash != cachedState.SHA256 {
+			log.Printf("Security alert: cache digest mismatch for %s (expected %s, got %s)", url, cachedState.SHA256, gotHash)
+			_ = f.Close()
+			return false
+		}
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			_ = f.Close()
+			return false
+		}
+	}
+
 	minRules := 1
 	if cachedState.RuleCount > 10 {
-		minRules = cachedState.RuleCount / 5
+		minRules = cachedState.RuleCount / 2
 		if minRules < 1 {
 			minRules = 1
 		}
@@ -289,12 +321,12 @@ func piHoleSourceRequiresMultipleRules(rawURL string) bool {
 	return host != "127.0.0.1" && host != "localhost"
 }
 
-func sourceRequiresMultipleRules(rawURL string, parser ListParser) bool {
+func sourceRequiresMultipleRules(rawURL string, parser any) bool {
 	switch parser.(type) {
-	case *PiHoleParser, *BlocklistParser:
+	case *PiHoleParser, *BlocklistParser, PiHoleParser, BlocklistParser:
 		return piHoleSourceRequiresMultipleRules(rawURL)
 	default:
-		return false
+		return piHoleSourceRequiresMultipleRules(rawURL)
 	}
 }
 
@@ -415,7 +447,7 @@ func recoverGravityArtifacts(dir string, statePath string) error {
 	for _, pattern := range tempPatterns {
 		tempPaths, _ := filepath.Glob(pattern)
 		for _, tempPath := range tempPaths {
-				_ = removeFileFunc(tempPath)
+			_ = removeFileFunc(tempPath)
 		}
 	}
 	return nil
@@ -476,7 +508,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		}
 		for _, staged := range stagedSources {
 			if staged.tempPath != "" {
-			_ = removeFileFunc(staged.tempPath)
+				_ = removeFileFunc(staged.tempPath)
 			}
 		}
 	}()
@@ -537,7 +569,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 
 		writer := bufio.NewWriter(f)
 		parserMu.RLock()
-		var parser ListParser = &PiHoleParser{}
+		var parser any = &PiHoleParser{}
 
 		var prefixes []string
 		for prefix := range parsersMap {
@@ -588,8 +620,8 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 					sourceExceptions[domain] = true
 				},
 			)
-		} else {
-			parseErr = parser.Parse(limitedBody, func(domain string) {
+		} else if standardParser, ok := parser.(ListParser); ok {
+			parseErr = standardParser.Parse(limitedBody, func(domain string) {
 				domain = normalizeDomain(domain)
 				if !isEffectiveDomain(domain) {
 					return
@@ -602,6 +634,13 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 					}
 				}
 			})
+		} else {
+			parseErr = fmt.Errorf("unsupported parser type for %s", url)
+		}
+
+		// Drain unconsumed bytes from limitedBody to ensure total response does not exceed limit
+		if _, err := io.Copy(io.Discard, limitedBody); err != nil && parseErr == nil {
+			parseErr = err
 		}
 
 		if writeErr == nil && parseErr != nil {
@@ -610,10 +649,14 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		if writeErr == nil && blockCount == 0 {
 			writeErr = fmt.Errorf("source produced no effective block rules")
 		}
-		if writeErr == nil && sourceRequiresMultipleRules(url, parser) && len(uniqueBlockDomains) < 2 {
-			writeErr = fmt.Errorf("source produced insufficient effective block rules")
+		minRequired := 1
+		if sourceRequiresMultipleRules(url, parser) {
+			minRequired = 2
 		}
-		if writeErr == nil && stateMap[url].RuleCount > 10 && len(uniqueBlockDomains) < stateMap[url].RuleCount/5 {
+		if writeErr == nil && len(uniqueBlockDomains) < minRequired {
+			writeErr = fmt.Errorf("source produced insufficient effective block rules (%d < %d)", len(uniqueBlockDomains), minRequired)
+		}
+		if writeErr == nil && stateMap[url].RuleCount > 10 && len(uniqueBlockDomains) < stateMap[url].RuleCount/2 {
 			writeErr = fmt.Errorf("source suffered an unexpected rule drop from %d to %d rules", stateMap[url].RuleCount, len(uniqueBlockDomains))
 		}
 
@@ -633,6 +676,11 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 		}
 
 		resp.Body.Close()
+
+		var cacheHash string
+		if writeErr == nil {
+			cacheHash, writeErr = computeFileSHA256(tempCache)
+		}
 
 		if writeErr != nil {
 			log.Printf("Error processing blocklist %s: %v", url, writeErr)
@@ -659,6 +707,7 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 				LastModified: resp.Header.Get("Last-Modified"),
 				Exceptions:   sortedKeys(sourceExceptions),
 				RuleCount:    len(uniqueBlockDomains),
+				SHA256:       cacheHash,
 			},
 		})
 		for domain := range sourceExceptions {
@@ -687,6 +736,21 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	for _, staged := range stagedSources {
 		newStateMap[staged.url] = staged.state
 	}
+
+	// Stale source eviction: clean up caches and state for sources removed from DefaultLists
+	activeURLs := make(map[string]bool)
+	for _, u := range DefaultLists {
+		activeURLs[u] = true
+	}
+	for u := range newStateMap {
+		if !activeURLs[u] {
+			oldCache := cachePathForURL(dir, u)
+			_ = removeFileFunc(oldCache)
+			_ = removeFileFunc(oldCache + ".bak")
+			delete(newStateMap, u)
+		}
+	}
+
 	newStateMap[gravityStateMetaKey] = GravityState{ETag: newGravityCommitMarker()}
 	type publishedCache struct {
 		cachePath  string
@@ -697,10 +761,10 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 	rollbackPublishedCaches := func() {
 		for i := len(published) - 1; i >= 0; i-- {
 			entry := published[i]
-				_ = removeFileFunc(entry.cachePath)
-					if _, statErr := statFileFunc(entry.backupPath); statErr == nil {
-						_ = renameFileFunc(entry.backupPath, entry.cachePath)
-					}
+			_ = removeFileFunc(entry.cachePath)
+			if _, statErr := statFileFunc(entry.backupPath); statErr == nil {
+				_ = renameFileFunc(entry.backupPath, entry.cachePath)
+			}
 		}
 	}
 	for _, staged := range stagedSources {
@@ -736,8 +800,8 @@ func refreshGravity(ctx context.Context, dir string, r *FilterEngine) error {
 			rollbackPublishedCaches()
 			return fmt.Errorf("commit staged cache for %s: %w", staged.url, err)
 		}
-			staged.tempPath = ""
-			published = append(published, publishedCache{cachePath: staged.cachePath, backupPath: backupPath})
+		staged.tempPath = ""
+		published = append(published, publishedCache{cachePath: staged.cachePath, backupPath: backupPath})
 	}
 	if len(stagedSources) > 0 {
 		if err := syncDirFunc(dir); err != nil {

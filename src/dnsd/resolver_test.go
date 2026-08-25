@@ -55,10 +55,6 @@ func TestFilterEngineTrailingDot(t *testing.T) {
 	}
 }
 
-
-
-
-
 func TestWhitespaceNormalization(t *testing.T) {
 	r := NewFilterEngine([]string{"1.1.1.1"})
 	r.AddBlockedDomain("  ads.doubleclick.net  ")
@@ -251,5 +247,26 @@ func TestFilterEngine_BlacklistOverridesWhitelistAndGravityAllowlist(t *testing.
 
 	if !r.Resolve("ads.example.com") {
 		t.Fatal("expected explicit blacklist to override whitelist and gravity allowlist")
+	}
+}
+
+func TestFilterEngine_IsBlacklisted(t *testing.T) {
+	r := NewFilterEngine(nil)
+	r.SetLists(
+		map[string]bool{"whitelist.com": true},
+		map[string]bool{"blacklisted.com": true},
+	)
+
+	if !r.IsBlacklisted("blacklisted.com") {
+		t.Fatal("expected blacklisted.com to return true for IsBlacklisted")
+	}
+	if !r.IsBlacklisted("blacklisted.com.") {
+		t.Fatal("expected trailing dot blacklisted.com. to return true for IsBlacklisted")
+	}
+	if r.IsBlacklisted("whitelist.com") {
+		t.Fatal("expected whitelist.com to return false for IsBlacklisted")
+	}
+	if r.IsBlacklisted("other.com") {
+		t.Fatal("expected other.com to return false for IsBlacklisted")
 	}
 }

@@ -37,6 +37,49 @@ func cacheKey(qname string, qtype, qclass uint16) string {
 	return fmt.Sprintf("%s|%d|%d", qname, qtype, qclass)
 }
 
+func cloneResource(r dnsmessage.Resource) dnsmessage.Resource {
+	resCopy := r
+	switch b := r.Body.(type) {
+	case *dnsmessage.AResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.AAAAResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.CNAMEResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.TXTResource:
+		body := *b
+		body.TXT = make([]string, len(b.TXT))
+		copy(body.TXT, b.TXT)
+		resCopy.Body = &body
+	case *dnsmessage.PTRResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.MXResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.NSResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.SOAResource:
+		body := *b
+		resCopy.Body = &body
+	case *dnsmessage.OPTResource:
+		body := *b
+		body.Options = make([]dnsmessage.Option, len(b.Options))
+		for i, opt := range b.Options {
+			optCopy := opt
+			optCopy.Data = make([]byte, len(opt.Data))
+			copy(optCopy.Data, opt.Data)
+			body.Options[i] = optCopy
+		}
+		resCopy.Body = &body
+	}
+	return resCopy
+}
+
 func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
 	if msg == nil {
 		return nil
@@ -47,13 +90,19 @@ func cloneMessage(msg *dnsmessage.Message) *dnsmessage.Message {
 	copy(msgCopy.Questions, msg.Questions)
 
 	msgCopy.Answers = make([]dnsmessage.Resource, len(msg.Answers))
-	copy(msgCopy.Answers, msg.Answers)
+	for i, a := range msg.Answers {
+		msgCopy.Answers[i] = cloneResource(a)
+	}
 
 	msgCopy.Authorities = make([]dnsmessage.Resource, len(msg.Authorities))
-	copy(msgCopy.Authorities, msg.Authorities)
+	for i, a := range msg.Authorities {
+		msgCopy.Authorities[i] = cloneResource(a)
+	}
 
 	msgCopy.Additionals = make([]dnsmessage.Resource, len(msg.Additionals))
-	copy(msgCopy.Additionals, msg.Additionals)
+	for i, a := range msg.Additionals {
+		msgCopy.Additionals[i] = cloneResource(a)
+	}
 
 	return &msgCopy
 }
@@ -83,13 +132,20 @@ func (c *DNSCache) Get(qname string, qtype, qclass uint16) (*dnsmessage.Message,
 
 	ttlRemaining := uint32(entry.expiresAt.Sub(now).Seconds())
 	for i := range msgCopy.Answers {
-		msgCopy.Answers[i].Header.TTL = ttlRemaining
+		if msgCopy.Answers[i].Header.Type != dnsmessage.TypeOPT {
+			msgCopy.Answers[i].Header.TTL = ttlRemaining
+		}
 	}
 	for i := range msgCopy.Authorities {
-		msgCopy.Authorities[i].Header.TTL = ttlRemaining
+		if msgCopy.Authorities[i].Header.Type != dnsmessage.TypeOPT {
+			msgCopy.Authorities[i].Header.TTL = ttlRemaining
+		}
 	}
 	for i := range msgCopy.Additionals {
-		msgCopy.Additionals[i].Header.TTL = ttlRemaining
+		// RFC 6891: OPT TTL encodes extended RCODE and flags, never overwrite
+		if msgCopy.Additionals[i].Header.Type != dnsmessage.TypeOPT {
+			msgCopy.Additionals[i].Header.TTL = ttlRemaining
+		}
 	}
 
 	return msgCopy, true
@@ -105,16 +161,23 @@ func (c *DNSCache) Set(qname string, qtype, qclass uint16, msg *dnsmessage.Messa
 
 	key := cacheKey(qname, qtype, qclass)
 
-	var minTTL uint32 = msg.Answers[0].Header.TTL
+	var minTTL uint32 = 0
 	for _, ans := range msg.Answers {
-		if ans.Header.TTL < minTTL {
-			minTTL = ans.Header.TTL
+		if ans.Header.Type != dnsmessage.TypeOPT {
+			if minTTL == 0 || ans.Header.TTL < minTTL {
+				minTTL = ans.Header.TTL
+			}
 		}
 	}
 	for _, auth := range msg.Authorities {
-		if auth.Header.TTL < minTTL {
-			minTTL = auth.Header.TTL
+		if auth.Header.Type != dnsmessage.TypeOPT {
+			if minTTL == 0 || auth.Header.TTL < minTTL {
+				minTTL = auth.Header.TTL
+			}
 		}
+	}
+	if minTTL == 0 {
+		minTTL = 60
 	}
 
 	now := time.Now()

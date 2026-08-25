@@ -98,7 +98,6 @@ func (d *Daemon) Start(ctx context.Context) error {
 	defer conn.Close()
 	log.Printf("Blackhole DNS server listening on 127.0.0.1:%d...", d.config.Port)
 
-
 	rb := NewRingBuffer(1000)
 	var ipcServer *IPCServer
 	stats := NewGlobalStats()
@@ -133,7 +132,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 
 	started = true
 	go d.handleSignals(ctx, cancel, conn, ipcServer)
-	d.runMessageLoop(conn, exclusionManager, r, rb, stats)
+	d.runMessageLoop(ctx, conn, exclusionManager, r, rb, stats)
 	return daemonRunResult(ctx)
 }
 
@@ -160,27 +159,27 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFu
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigChan)
-	
+
 	select {
 	case sig := <-sigChan:
 		log.Printf("Received signal %v. Cleaning up...", sig)
 	case <-ctx.Done():
 		log.Printf("Context cancelled. Cleaning up...")
 	}
-	
+
 	StopVPNMonitor()
 	StopProcessMonitor()
-	
+
 	// Gracefully shut down the IPC HTTP server if it's running
 	if ipcServer != nil {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
-		ipcServer.Shutdown(shutdownCtx)
+		_ = ipcServer.Shutdown(shutdownCtx)
 	}
-	
+
 	// Close the UDP Listener
 	conn.Close()
-	
+
 	// Ensure the parent context cancels down the tree
 	cancel(nil)
 }
@@ -188,6 +187,7 @@ func (d *Daemon) handleSignals(ctx context.Context, cancel context.CancelCauseFu
 func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
 	var msg dnsmessage.Message
 	if err := msg.Unpack(payload); err != nil {
+		log.Printf("Failed to unpack DNS message: %v", err)
 		return
 	}
 
@@ -215,17 +215,26 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 	var status string
 
 	var chain FilterChain
-	if IsPaused() {
-		status = "Allowed"
-		d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
+	if r.IsBlacklisted(domain) {
+		status = "Blocked"
+		log.Printf("BLACKLIST blocked domain='%s' client=%s", domain, cliAddr.String())
+		sendBlockedResponse(msg, cliAddr, conn)
+	} else if IsPaused() {
+		if !d.forwardQuery(payload, cliAddr, conn, msg, domain, nil) {
+			status = "Servfail"
+		} else {
+			status = "Allowed"
+		}
 	} else if isExcluded {
-		status = "Excluded"
 		log.Printf("EXCLUSION bypass for process='%s' bundle='%s' domain='%s'", procName, bundleID, domain)
-		d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
+		if !d.forwardQuery(payload, cliAddr, conn, msg, domain, nil) {
+			status = "Servfail"
+		} else {
+			status = "Excluded"
+		}
 	} else {
-		// FIXED: Append GetFilters() to the chain so registered extensions actually run.
 		chain = append(FilterChain{r}, GetFilters()...)
-		
+
 		// Evaluate the full FilterChain *before* recording stats
 		respRaw, block, err := chain.Process(payload)
 		if block || err != nil {
@@ -239,9 +248,11 @@ func (d *Daemon) processQuery(payload []byte, cliAddr *net.UDPAddr, conn *net.UD
 				_, _ = conn.WriteToUDP(respRaw, cliAddr)
 			}
 		} else {
-			status = "Allowed"
-			// Pass a nil chain because filters have already been applied
-			d.forwardQuery(payload, cliAddr, conn, msg, domain, nil)
+			if !d.forwardQuery(payload, cliAddr, conn, msg, domain, nil) {
+				status = "Servfail"
+			} else {
+				status = "Allowed"
+			}
 		}
 	}
 
@@ -263,7 +274,7 @@ type dnsQueryJob struct {
 	cliAddr *net.UDPAddr
 }
 
-func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
+func (d *Daemon) runMessageLoop(ctx context.Context, conn *net.UDPConn, exclusionManager *ExclusionManager, r *FilterEngine, rb *RingBuffer, stats *GlobalStats) {
 	const workerCount = 64
 	const queueSize = 2048
 
@@ -279,6 +290,11 @@ func (d *Daemon) runMessageLoop(conn *net.UDPConn, exclusionManager *ExclusionMa
 			}
 		}()
 	}
+
+	go func() {
+		<-ctx.Done()
+		_ = conn.Close()
+	}()
 
 	for {
 		buf := make([]byte, 4096)
@@ -320,7 +336,7 @@ func (d *Daemon) sendServfail(conn *net.UDPConn, cliAddr *net.UDPAddr, raw []byt
 	}
 }
 
-func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) {
+func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPConn, msg dnsmessage.Message, domain string, chain FilterChain) bool {
 	if len(msg.Questions) > 0 {
 		q := msg.Questions[0]
 		if cachedMsg, ok := d.dnsCache.Get(domain, uint16(q.Type), uint16(q.Class)); ok {
@@ -329,7 +345,7 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 			resp, err := cp.Pack()
 			if err == nil {
 				_, _ = conn.WriteToUDP(resp, cliAddr)
-				return
+				return true
 			}
 		}
 	}
@@ -339,13 +355,17 @@ func (d *Daemon) forwardQuery(raw []byte, cliAddr *net.UDPAddr, conn *net.UDPCon
 	d.upstreamMu.RUnlock()
 
 	respRaw, err := ForwardWithFilter(chain, raw, currentUpstreams, 500*time.Millisecond, nil)
-	if err == nil {
-		var respMsg dnsmessage.Message
-		if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
-			d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), &respMsg)
-		}
-		_, _ = conn.WriteToUDP(respRaw, cliAddr)
+	if err != nil {
+		d.sendServfail(conn, cliAddr, raw)
+		return false
 	}
+
+	var respMsg dnsmessage.Message
+	if unpackErr := respMsg.Unpack(respRaw); unpackErr == nil && len(respMsg.Questions) > 0 {
+		d.dnsCache.Set(domain, uint16(respMsg.Questions[0].Type), uint16(respMsg.Questions[0].Class), &respMsg)
+	}
+	_, _ = conn.WriteToUDP(respRaw, cliAddr)
+	return true
 }
 
 func sendBlockedResponse(msg dnsmessage.Message, cliAddr *net.UDPAddr, conn *net.UDPConn) {

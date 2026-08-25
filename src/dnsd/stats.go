@@ -46,7 +46,7 @@ func (s *GlobalStats) Increment(blocked bool, domain, app string) {
 
 	now := time.Now()
 	hour := now.Truncate(time.Hour).Unix()
-	
+
 	b, ok := s.buckets[hour]
 	if !ok {
 		b = newBucket()
@@ -63,8 +63,8 @@ func (s *GlobalStats) Increment(blocked bool, domain, app string) {
 			b.apps[app]++
 		}
 	}
-	
-	cutoff := now.Add(-24 * time.Hour).Truncate(time.Hour).Unix()
+
+	cutoff := now.Truncate(time.Hour).Add(-24 * time.Hour).Unix()
 	for h := range s.buckets {
 		if h < cutoff {
 			delete(s.buckets, h)
@@ -106,7 +106,7 @@ func (s *GlobalStats) Snapshot() StatsSnapshot {
 	apps := make(map[string]uint64)
 
 	now := time.Now()
-	cutoffTime := now.Add(-24 * time.Hour).Truncate(time.Hour)
+	cutoffTime := now.Truncate(time.Hour).Add(-24 * time.Hour)
 	cutoff := cutoffTime.Unix()
 
 	for h, b := range s.buckets {

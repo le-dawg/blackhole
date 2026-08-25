@@ -183,7 +183,7 @@ func StartVPNMonitor(onUpstreamsChanged func([]string)) error {
 
 	// Block until goMonitorStarted is called, ensuring the run loop is fully initialized
 	status := <-monitorChan
-	
+
 	mu.Lock()
 	defer mu.Unlock()
 	if status != 0 {

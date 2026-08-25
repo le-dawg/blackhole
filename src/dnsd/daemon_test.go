@@ -31,7 +31,7 @@ func TestDaemonRunResult_ReturnsUnexpectedIPCCause(t *testing.T) {
 	ipcErrCh <- errors.New("boom")
 	close(ipcErrCh)
 
-	d.runMessageLoop(conn, nil, nil, nil, nil)
+	d.runMessageLoop(ctx, conn, nil, nil, nil, nil)
 
 	err = daemonRunResult(ctx)
 	if !errors.Is(err, ErrUnexpectedIPCServerTermination) {
@@ -53,7 +53,7 @@ func TestDaemonRunResult_IgnoresExpectedShutdown(t *testing.T) {
 	go d.handleSignals(ctx, cancel, conn, nil)
 
 	cancel(nil)
-	d.runMessageLoop(conn, nil, nil, nil, nil)
+	d.runMessageLoop(ctx, conn, nil, nil, nil, nil)
 
 	if err := daemonRunResult(ctx); err != nil {
 		t.Fatalf("expected nil error on expected shutdown, got %v", err)

@@ -92,10 +92,10 @@ func (l *AuthenticatedUnixListener) Accept() (net.Conn, error) {
 				return
 			}
 
-				if !l.isAllowedUID(cred.Uid) {
-					authErr = ErrUnauthorizedUID
-				}
-			})
+			if !l.isAllowedUID(cred.Uid) {
+				authErr = ErrUnauthorizedUID
+			}
+		})
 
 		if err != nil || authErr != nil {
 			conn.Close()

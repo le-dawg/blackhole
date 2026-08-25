@@ -26,16 +26,14 @@ static uint16_t get_socket_local_port(struct socket_fdinfo *sockInfo) {
 // Helper to check if process arguments contain any of the patterns using KERN_PROCARGS2
 static int check_pid_patterns(pid_t pid, char** patterns, int pattern_count) {
 	int mib[3];
-	static int argmax = 0;
+	int argmax = 0;
 	size_t size;
 	char *procargs;
 
-	if (argmax == 0) {
-		int mib_argmax[2] = {CTL_KERN, KERN_ARGMAX};
-		size_t size_argmax = sizeof(argmax);
-		if (sysctl(mib_argmax, 2, &argmax, &size_argmax, NULL, 0) == -1) {
-			return -1;
-		}
+	int mib_argmax[2] = {CTL_KERN, KERN_ARGMAX};
+	size_t size_argmax = sizeof(argmax);
+	if (sysctl(mib_argmax, 2, &argmax, &size_argmax, NULL, 0) == -1 || argmax <= 0) {
+		argmax = 262144; // Safe fallback (256 KB)
 	}
 
 	procargs = (char *)malloc(argmax);
@@ -281,9 +279,9 @@ drainLoop:
 				cache := portToPIDCache.Load()
 				newMappings := make(map[uint16]portPIDEntry)
 				for port, entry := range cache.Mappings {
-					ttl := 5 * time.Second
+					ttl := 1 * time.Second
 					if entry.err != nil {
-						ttl = 2 * time.Second
+						ttl = 500 * time.Millisecond
 					}
 					if now.Sub(entry.createdAt) < ttl {
 						newMappings[port] = entry
@@ -323,7 +321,7 @@ drainLoop:
 					return
 				}
 				processScanMu.Lock()
-				
+
 				cache := portToPIDCache.Load()
 				if entry, found := cache.Mappings[port]; found {
 					ttl := 5 * time.Second
@@ -337,13 +335,13 @@ drainLoop:
 				}
 
 				_, err := getProcessInfoForPortNoCache(port)
-				
+
 				oldCache := portToPIDCache.Load()
 				newMappings := make(map[uint16]portPIDEntry)
 				for k, v := range oldCache.Mappings {
 					newMappings[k] = v
 				}
-				
+
 				if err != nil {
 					newMappings[port] = portPIDEntry{
 						createdAt: time.Now(),
@@ -468,9 +466,9 @@ func GetProcessInfoForPort(port uint16, patterns []string) (string, string, erro
 	cache := portToPIDCache.Load()
 	if cache != nil {
 		if entry, found := cache.Mappings[port]; found {
-			ttl := 5 * time.Second
+			ttl := 1 * time.Second
 			if entry.err != nil {
-				ttl = 2 * time.Second
+				ttl = 500 * time.Millisecond
 			}
 			if time.Since(entry.createdAt) < ttl {
 				if entry.err != nil {
@@ -675,4 +673,9 @@ func parsePlistXML(data []byte) string {
 	}
 	return ""
 }
-func WaitForScan() { time.Sleep(50 * time.Millisecond); processScanMu.Lock(); processScanMu.Unlock() }
+func WaitForScan() {
+	time.Sleep(50 * time.Millisecond)
+	processScanMu.Lock()
+	_ = len(scanTasks)
+	processScanMu.Unlock()
+}
