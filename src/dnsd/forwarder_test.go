@@ -353,4 +353,66 @@ func TestValidateDNSResponse_CNAMEAndBailiwick(t *testing.T) {
 	if err := validateDNSResponse(mxReqRaw, validAAAARaw); err != nil {
 		t.Fatalf("expected valid AAAA glue to pass, got: %v", err)
 	}
+
+	// 12. Untrusted in-bailiwick Authority RR type (e.g. TXT record in Authority section)
+	invalidAuthTypeResp := validResp
+	invalidAuthTypeResp.Authorities = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("example.com."),
+				Type:  dnsmessage.TypeTXT,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.TXTResource{TXT: []string{"untrusted authority payload"}},
+		},
+	}
+	invalidAuthTypeRaw, _ := invalidAuthTypeResp.Pack()
+	if err := validateDNSResponse(reqRaw, invalidAuthTypeRaw); err == nil {
+		t.Fatalf("expected non-NS/SOA authority RR type to fail")
+	}
+
+	// 13. Untrusted in-bailiwick Authority Class mismatch
+	invalidAuthClassResp := validResp
+	invalidAuthClassResp.Authorities = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("example.com."),
+				Type:  dnsmessage.TypeNS,
+				Class: dnsmessage.ClassCSNET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.NSResource{NS: dnsmessage.MustNewName("ns1.example.com.")},
+		},
+	}
+	invalidAuthClassRaw, _ := invalidAuthClassResp.Pack()
+	if err := validateDNSResponse(reqRaw, invalidAuthClassRaw); err == nil {
+		t.Fatalf("expected authority class mismatch to fail")
+	}
+
+	// 14. Valid in-bailiwick SOA record in Authority section
+	validSOAResp := validResp
+	validSOAResp.Authorities = []dnsmessage.Resource{
+		{
+			Header: dnsmessage.ResourceHeader{
+				Name:  dnsmessage.MustNewName("example.com."),
+				Type:  dnsmessage.TypeSOA,
+				Class: dnsmessage.ClassINET,
+				TTL:   300,
+			},
+			Body: &dnsmessage.SOAResource{
+				NS:      dnsmessage.MustNewName("ns1.example.com."),
+				MBox:    dnsmessage.MustNewName("admin.example.com."),
+				Serial:  1,
+				Refresh: 3600,
+				Retry:   600,
+				Expire:  86400,
+				MinTTL:  300,
+			},
+		},
+	}
+	validSOARaw, _ := validSOAResp.Pack()
+	if err := validateDNSResponse(reqRaw, validSOARaw); err != nil {
+		t.Fatalf("expected valid SOA authority to pass, got: %v", err)
+	}
 }

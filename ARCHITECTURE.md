@@ -83,8 +83,9 @@ The REST IPC API operates exclusively over a Unix domain socket (`/var/run/black
 To prevent cache poisoning and spoofing attacks:
 - **Header Verification:** Responses must have `Header.Response == true`, matching OpCode, matching Query ID, and matching Question tuple (`QName`, `QType`, `QClass`).
 - **Cardinality Limits:** Requests and responses must contain exactly 1 question, and the total resource record count across Answer, Authority, and Additional sections must not exceed 100.
-- **CNAME Graph Traversal:** Answers are verified along an exact CNAME graph traversal starting from the queried domain (maximum 8 hops). Loop detection and conflicting CNAME owner checks immediately abort poisoned responses.
-- **Auxiliary Section Sanitization:** Authority records must reside strictly within the queried zone's non-empty bailiwick. Additional records must match either the CNAME traversal path, validated authoritative NS glue records, or Answer MX/SRV targets. OPT records (RFC 6891) are preserved without corrupting Extended RCODE/flags in TTL fields.
+- **CNAME Graph Traversal & Answer Type/Class Enforcement:** Answers must match `q.Class` and either `q.Type` or `TypeCNAME`. Answers are verified along an exact CNAME graph traversal starting from the queried domain (maximum 8 hops). Loop detection, conflicting CNAME owner checks, and terminal target mismatches immediately abort poisoned responses.
+- **Authority Section Sanitization:** Authority records must match `q.Class`, must strictly be `TypeNS` or `TypeSOA` (RFC 1035 / RFC 2181), and must reside strictly within the queried zone's non-empty bailiwick.
+- **Additional Section Address Glue Enforcement:** Additional records (except EDNS0 OPT) must match `q.Class`, must strictly be address glue (`TypeA` or `TypeAAAA`), and must match either in-bailiwick authoritative NS targets, Answer MX/SRV/NS targets, or the CNAME traversal path. OPT records (RFC 6891) are preserved without corrupting Extended RCODE/flags in TTL fields.
 
 ---
 

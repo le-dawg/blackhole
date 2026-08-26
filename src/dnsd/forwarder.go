@@ -106,8 +106,14 @@ func validateDNSResponse(reqRaw, respRaw []byte) error {
 		validAdditionalNames[k] = true
 	}
 
-	// Validate Authority records are within zone bailiwick & collect authorized in-bailiwick NS targets
+	// Validate Authority records match query class, expected RR types (NS/SOA), and zone bailiwick
 	for _, auth := range resp.Authorities {
+		if auth.Header.Class != q.Class {
+			return errors.New("authority record class mismatch")
+		}
+		if auth.Header.Type != dnsmessage.TypeNS && auth.Header.Type != dnsmessage.TypeSOA {
+			return errors.New("untrusted authority resource record type")
+		}
 		authName := strings.ToLower(auth.Header.Name.String())
 		if !isZoneBailiwick(qNameStr, authName) {
 			return errors.New("bailiwick mismatch: authority record out of zone")
